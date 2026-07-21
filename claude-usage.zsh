@@ -10,6 +10,9 @@
 #
 # Usage:    claude-usage                      # default account (~/.claude), colour bars
 #           claude-usage --text-only          # plain one-liner, no bars/colour
+#           claude-usage --theme bright       # pick a preset (default/mono/ascii/bright/neon)
+#           claude-usage --no-color           # keep the bars, drop all colour
+#           claude-usage --list-themes        # print the built-in preset names
 #           claude-usage --show-reset=false   # drop the trailing reset countdown
 #           claude-usage --sep ' / '          # custom metric delimiter (both modes)
 #           claude-usage --dir PATH           # another account's Claude config dir
@@ -27,6 +30,19 @@
 #           CLAUDE_USAGE_SEP       metric delimiter, both modes (default: per-mode)
 #           CLAUDE_USAGE_TTL       cache max age in seconds before a background
 #                                  refresh is triggered (default: 120)
+#
+# Theming:  --pretty output is themed. Pick a preset with --theme NAME (or
+#           CLAUDE_USAGE_THEME): default, mono (no colour), ascii (ASCII glyphs
+#           + colour, for fonts without block chars), bright (bright ANSI), neon
+#           (256-colour). --no-color drops colour from any theme but keeps bars.
+#           Fine-grained overrides layer on top of the chosen theme:
+#           CLAUDE_USAGE_COLORS      low:mid:high SGR params  (e.g. 32:33:31,
+#                                    92:93:91, or 38;5;46:38;5;226:38;5;196; ""=none)
+#           CLAUDE_USAGE_THRESHOLDS  amber:red fill breakpoints (e.g. 70:90)
+#           CLAUDE_USAGE_BAR_CHARS   full:partial:empty glyphs (partial is a
+#                                    low→high ramp, may be empty: e.g. '#::.')
+#           CLAUDE_USAGE_BRACKETS    left:right bar frame (e.g. '[:]'; ':' = none)
+#           CLAUDE_USAGE_DIM         SGR for separators/reset (default 2; ""=none)
 #
 # Output:   Default (--pretty), USD cap:  "$300.04/$300 ▕████▏100%"
 #           Default (--pretty), Max/Pro:  "7d▕██░░▏40% · opus▕███░▏63% · 5h▕█░░░░▏12% Reset 4h45m"
@@ -185,6 +201,9 @@ claude-usage() {
   # Separator between metrics. Empty → per-mode default (" | " text, " · " pretty).
   local sep_override="${CLAUDE_USAGE_SEP-}" sep_set=0
   [[ -n ${CLAUDE_USAGE_SEP+x} ]] && sep_set=1
+  # Theme (pretty mode): --theme > CLAUDE_USAGE_THEME > "default". --no-color
+  # forces all colour off regardless of theme (keeps the bars, unlike --text-only).
+  local theme_override="" nocolor=0
 
   # Account dir: --dir > CLAUDE_USAGE_DIR > CLAUDE_CONFIG_DIR > ~/.claude.
   # Deliberately profile-agnostic: no coupling to claude-profile.zsh or any
@@ -205,6 +224,12 @@ claude-usage() {
         [[ -n "${2+x}" ]] || { print -u2 "claude-usage: --sep requires a value"; return 1 }
         sep_override="$2"; sep_set=1; shift ;;
       --sep=*)    sep_override="${1#--sep=}"; sep_set=1 ;;
+      --theme)
+        [[ -n "${2+x}" ]] || { print -u2 "claude-usage: --theme requires a name"; return 1 }
+        theme_override="$2"; shift ;;
+      --theme=*)  theme_override="${1#--theme=}" ;;
+      --no-color|--no-colour) nocolor=1 ;;
+      --list-themes) print "default mono ascii bright neon"; return 0 ;;
       --fresh)      force=1 ;;
       --no-block)   noblock=1 ;;
       --dir)
@@ -212,15 +237,61 @@ claude-usage() {
         dir="$2"; shift ;;
       --dir=*)    dir="${1#--dir=}" ;;
       -h|--help)
-        print "usage: claude-usage [--dir PATH] [--pretty|--text-only|--json|--raw] [--show-reset=true|false] [--sep STR] [--fresh|--no-block]"
+        print "usage: claude-usage [--dir PATH] [--pretty|--text-only|--json|--raw] [--theme NAME|--no-color] [--show-reset=true|false] [--sep STR] [--fresh|--no-block]"
+        print "themes: default mono ascii bright neon  (also --list-themes)"
         return 0 ;;
       *)
-        print -u2 "usage: claude-usage [--dir PATH] [--pretty|--text-only|--json|--raw] [--show-reset=true|false] [--sep STR] [--fresh|--no-block]"
+        print -u2 "usage: claude-usage [--dir PATH] [--pretty|--text-only|--json|--raw] [--theme NAME|--no-color] [--show-reset=true|false] [--sep STR] [--fresh|--no-block]"
         return 1 ;;
     esac
     shift
   done
   dir="${dir%/}"
+
+  # ---- Theme resolution (pretty mode) ---------------------------------------
+  # A theme is: 3 colours (low/mid/high fill) + 2 thresholds + 3 bar glyphs
+  # (full / partial-ramp / empty) + 2 brackets + a dim SGR for separators.
+  # Colours/dim are raw SGR params ("32", "92", "38;5;196", or "" = no colour).
+  # gpartial is a low→high ramp of fractional-cell glyphs ("" = no partial cell).
+  local theme="${theme_override:-${CLAUDE_USAGE_THEME:-default}}"
+  local clo cmid chi tmid thi gfull gpartial gempty lbr rbr dim _a _b
+  case "$theme" in
+    default)
+      clo=32 cmid=33 chi=31; tmid=70 thi=90
+      gfull='█' gpartial='▏▎▍▌▋▊▉' gempty='░'; lbr='▕' rbr='▏'; dim=2 ;;
+    mono)          # no colour, keep the unicode bars (separators stay faint)
+      clo='' cmid='' chi=''; tmid=70 thi=90
+      gfull='█' gpartial='▏▎▍▌▋▊▉' gempty='░'; lbr='▕' rbr='▏'; dim=2 ;;
+    ascii)         # colours + ASCII glyphs, for fonts without block chars
+      clo=32 cmid=33 chi=31; tmid=70 thi=90
+      gfull='#' gpartial='' gempty='.'; lbr='[' rbr=']'; dim=2 ;;
+    bright)        # bright ANSI colours, unicode bars
+      clo=92 cmid=93 chi=91; tmid=70 thi=90
+      gfull='█' gpartial='▏▎▍▌▋▊▉' gempty='░'; lbr='▕' rbr='▏'; dim=2 ;;
+    neon)          # vivid 256-colour, unicode bars
+      clo='38;5;46' cmid='38;5;226' chi='38;5;196'; tmid=70 thi=90
+      gfull='█' gpartial='▏▎▍▌▋▊▉' gempty='░'; lbr='▕' rbr='▏'; dim=2 ;;
+    *)
+      print -u2 "claude-usage: unknown theme '$theme' (valid: default mono ascii bright neon)"
+      return 1 ;;
+  esac
+
+  # Per-field overrides layered on top of the theme. Manual %%/# splitting
+  # (not (s.:.)) so empty fields survive — e.g. BAR_CHARS='#::.' = no partial.
+  if [[ -n ${CLAUDE_USAGE_COLORS:-} ]]; then
+    clo="${CLAUDE_USAGE_COLORS%%:*}"; _a="${CLAUDE_USAGE_COLORS#*:}"
+    cmid="${_a%%:*}"; chi="${_a#*:}"
+  fi
+  if [[ -n ${CLAUDE_USAGE_THRESHOLDS:-} ]]; then
+    tmid="${CLAUDE_USAGE_THRESHOLDS%%:*}"; thi="${CLAUDE_USAGE_THRESHOLDS#*:}"
+  fi
+  if [[ -n ${CLAUDE_USAGE_BAR_CHARS:-} ]]; then
+    gfull="${CLAUDE_USAGE_BAR_CHARS%%:*}"; _b="${CLAUDE_USAGE_BAR_CHARS#*:}"
+    gpartial="${_b%%:*}"; gempty="${_b#*:}"
+  fi
+  [[ -n ${CLAUDE_USAGE_BRACKETS+x} ]] && { lbr="${CLAUDE_USAGE_BRACKETS%%:*}"; rbr="${CLAUDE_USAGE_BRACKETS#*:}"; }
+  [[ -n ${CLAUDE_USAGE_DIM+x} ]] && dim="$CLAUDE_USAGE_DIM"
+  (( nocolor )) && { clo='' cmid='' chi='' dim=''; }
 
   local cache; cache=$(_claude_usage_cache_path "$dir")
 
@@ -373,10 +444,18 @@ claude-usage() {
       ;;
     pretty)
       # Colour bars, inspired by statusline-command.sh. Each metric is
-      # "<label>▕<bar>▏<pct>%" tinted green/amber/red by fill; USD seats render
-      # "$s/$l ▕bar▏pct%". With --reset (default), the 5h window shows its
-      # countdown last. Bar width via CLAUDE_USAGE_BAR_WIDTH (default 10).
-      jq -r --argjson d "$divisor" --argjson w "$bar_width" --argjson showreset "$show_reset" --arg sep "$pretty_sep" '
+      # "<label>▕<bar>▏<pct>%" tinted by fill; USD seats render
+      # "$s/$l ▕bar▏pct%". Colours, thresholds, glyphs and brackets all come
+      # from the resolved theme (--theme / CLAUDE_USAGE_THEME, plus the per-field
+      # CLAUDE_USAGE_{COLORS,THRESHOLDS,BAR_CHARS,BRACKETS,DIM} overrides above).
+      # With --reset (default) the 5h window shows its countdown last. Bar width
+      # via CLAUDE_USAGE_BAR_WIDTH (default 10).
+      jq -r --argjson d "$divisor" --argjson w "$bar_width" \
+            --argjson showreset "$show_reset" --arg sep "$pretty_sep" \
+            --arg clo "$clo" --arg cmid "$cmid" --arg chi "$chi" \
+            --argjson tmid "$tmid" --argjson thi "$thi" \
+            --arg gfull "$gfull" --arg gpartial "$gpartial" --arg gempty "$gempty" \
+            --arg lbr "$lbr" --arg rbr "$rbr" --arg dim "$dim" '
         def money:
           if type == "object" then (.amount_minor // 0) / pow(10; (.exponent // 2))
           elif type == "number" then .
@@ -387,23 +466,24 @@ claude-usage() {
           elif .kind == "weekly_all" then "7d"
           elif .kind == "weekly_scoped" then (.scope.model.display_name // .scope.surface // "scoped")
           else .kind end;
-        def col($p): if $p >= 90 then "31" elif $p >= 70 then "33" else "32" end;   # red / amber / green
-        # eighth-blocks ▏▎▍▌▋▊▉ (1..7 eighths) for the fractional trailing cell
-        def eighths: ["▏","▎","▍","▌","▋","▊","▉"];
+        def col($p): if $p >= $thi then $chi elif $p >= $tmid then $cmid else $clo end;
+        # Wrap $s in SGR $c, but only when $c is non-empty (mono/--no-color: no ANSI).
+        def paint($c; $s): if ($c | length) > 0 then "[\($c)m\($s)[0m" else $s end;
         def mkbar($p):
           (if $p < 0 then 0 elif $p > 100 then 100 else $p end) as $pct
           | ($pct / 100 * $w * 8) as $units
           | (($units / 8) | floor) as $full
           | (($units - ($full * 8)) | floor) as $partial
           | ([$full, $w] | min) as $fc
-          | (($fc < $w) and ($partial >= 1)) as $hasp
+          | ($gpartial | length) as $pn                          # ramp length (0 = none)
+          | (($fc < $w) and ($partial >= 1) and ($pn > 0)) as $hasp
+          | (if $hasp then (($partial * $pn / 8) | floor) else 0 end) as $pidx
           | ($fc + (if $hasp then 1 else 0 end)) as $used
-          | (("█" * $fc) // "")                                  # █ full cells
-            + (if $hasp then eighths[$partial - 1] else "" end)       # partial cell
-            + (("░" * ($w - $used)) // "");                      # ░ empty cells
+          | (($gfull * $fc) // "")                               # full cells
+            + (if $hasp then ($gpartial | .[$pidx:($pidx + 1)]) else "" end)   # partial cell
+            + (($gempty * ($w - $used)) // "");                  # empty cells
         def bar($label; $p):
-          col($p) as $c |
-          "\u001b[\($c)m\($label)▕\(mkbar($p))▏\($p | round)%\u001b[0m";  # ▕ … ▏
+          paint(col($p); "\($label)\($lbr)\(mkbar($p))\($rbr)\($p | round)%");
         def reset_left:
           ([ .limits[]? | select(.kind == "session") | .resets_at ] | first) as $r
           | if ($r == null) then ""
@@ -413,22 +493,20 @@ claude-usage() {
                   | if $h > 0 then "\($h)h\($m)m" else "\($m)m" end
                 end
             end;
-        ("\u001b[2m\($sep)\u001b[0m") as $sep |                       # dimmed " · "
+        (paint($dim; $sep)) as $sep |                            # dimmed separator
 
         (
           if (.spend.limit // null) != null then
             (.spend.used | money) as $s | (.spend.limit | money) as $l |
             (.spend.percent // (if $l > 0 then $s / $l * 100 else 0 end)) as $p |
-            col($p) as $c |
-            "\u001b[\($c)m$\($s | fmt2)/$\($l | fmt2) ▕\(mkbar($p))▏\($p | round)%\u001b[0m"
+            paint(col($p); "$\($s | fmt2)/$\($l | fmt2) \($lbr)\(mkbar($p))\($rbr)\($p | round)%")
           elif (.extra_usage.monthly_limit // 0) > 0 then
             (if .extra_usage.decimal_places != null
              then pow(10; .extra_usage.decimal_places) else $d end) as $div |
             ((.extra_usage.used_credits  // 0) / $div) as $s |
             ((.extra_usage.monthly_limit // 0) / $div) as $l |
             (if $l > 0 then $s / $l * 100 else 0 end) as $p |
-            col($p) as $c |
-            "\u001b[\($c)m$\($s | fmt2)/$\($l | fmt2) ▕\(mkbar($p))▏\($p | round)%\u001b[0m"
+            paint(col($p); "$\($s | fmt2)/$\($l | fmt2) \($lbr)\(mkbar($p))\($rbr)\($p | round)%")
           elif ((.limits // []) | length) > 0 then
             # non-session bars first, session held to the end (next to its reset)
             ([ .limits[] | select(.kind != "session") | bar(limit_label; (.percent // 0)) ]) as $others |
@@ -439,7 +517,8 @@ claude-usage() {
             ([ bar("7d"; (.seven_day.utilization // 0)),
                bar("5h"; (.five_hour.utilization // 0)) ] | join($sep))
           end
-        ) + (if $showreset then (reset_left | if . == "" then "" else " \u001b[2mReset \(.)\u001b[0m" end) else "" end)
+        ) + (if $showreset then (reset_left | if . == "" then "" else " " + paint($dim; "Reset \(.)") end) else "" end)
+
       ' "$cache"
       ;;
   esac

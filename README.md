@@ -59,6 +59,9 @@ be *sourced* — it isn't an executable on `PATH`.)
 ```
 claude-usage                          # colour progress bars (default, --pretty)
 claude-usage --text-only              # plain one-liner, no bars/colour
+claude-usage --theme bright           # pick a preset (default/mono/ascii/bright/neon)
+claude-usage --no-color               # keep the bars, drop all colour
+claude-usage --list-themes            # print the built-in preset names
 claude-usage --json                   # machine-readable summary for scripts
 claude-usage --raw                    # full untouched endpoint response
 claude-usage --fresh                  # blocking refresh, guaranteed current
@@ -70,6 +73,39 @@ claude-usage --show-reset=false       # drop the 5h reset countdown
 
 Both `--pretty` and `--text-only` order the metrics with the 5h window last
 (next to the reset countdown).
+
+## Theming
+
+The `--pretty` bars are themed. Pick a preset with `--theme NAME` (or
+`CLAUDE_USAGE_THEME`); `--list-themes` prints the names.
+
+| Theme | Look |
+|---|---|
+| `default` | green / amber / red, unicode eighth-block bars (`▕██▊░░▏`) |
+| `mono` | no colour, same unicode bars (separators stay faint) |
+| `ascii` | colour + ASCII glyphs (`[##....]`) — for fonts without block chars |
+| `bright` | bright ANSI colours, unicode bars |
+| `neon` | vivid 256-colour, unicode bars |
+
+`--no-color` drops colour from *any* theme while keeping the bars (unlike
+`--text-only`, which drops the bars too).
+
+For finer control, these env vars override individual fields **on top of** the
+chosen theme:
+
+| Variable | Format | Example |
+|---|---|---|
+| `CLAUDE_USAGE_COLORS` | `low:mid:high` SGR params (`""` = no colour) | `92:93:91` or `38;5;46:38;5;226:38;5;196` |
+| `CLAUDE_USAGE_THRESHOLDS` | `amber:red` fill breakpoints | `70:90` |
+| `CLAUDE_USAGE_BAR_CHARS` | `full:partial:empty` glyphs (partial is a low→high ramp, may be empty) | `#::.` |
+| `CLAUDE_USAGE_BRACKETS` | `left:right` bar frame (`:` = none) | `[:]` |
+| `CLAUDE_USAGE_DIM` | SGR for separators/reset (`""` = none) | `2` |
+
+Example — a monochrome, ASCII-framed bar for a limited terminal:
+
+```sh
+CLAUDE_USAGE_BAR_CHARS='#::.' CLAUDE_USAGE_BRACKETS='[:]' claude-usage --no-color
+```
 
 ## Accounts & tokens
 
@@ -102,6 +138,12 @@ constantly-repainting statusline can't hammer the endpoint.
 | `CLAUDE_USAGE_BAR_WIDTH` | `10` | Cells per bar in `--pretty`. |
 | `CLAUDE_USAGE_SEP` | per-mode | Metric delimiter for both modes (`" \| "` text, `" · "` pretty by default). |
 | `CLAUDE_USAGE_DIVISOR` | `100` | Credits→dollars divisor (100 = the API's cents) for legacy USD schemas. |
+| `CLAUDE_USAGE_THEME` | `default` | `--pretty` preset: `default` / `mono` / `ascii` / `bright` / `neon` (see [Theming](#theming)). |
+| `CLAUDE_USAGE_COLORS` | per-theme | `low:mid:high` fill-colour SGR params (`""` = no colour). |
+| `CLAUDE_USAGE_THRESHOLDS` | `70:90` | `amber:red` fill breakpoints. |
+| `CLAUDE_USAGE_BAR_CHARS` | per-theme | `full:partial:empty` bar glyphs (partial ramp may be empty). |
+| `CLAUDE_USAGE_BRACKETS` | per-theme | `left:right` bar frame (`:` = none). |
+| `CLAUDE_USAGE_DIM` | `2` | SGR for separators / reset countdown (`""` = none). |
 
 ## Caveats
 
