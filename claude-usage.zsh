@@ -21,6 +21,8 @@
 #           claude-usage --fresh              # blocking refresh, guaranteed current
 #           claude-usage --no-block           # statusline mode: never blocks,
 #                                             # prints nothing on cold/broken state
+#           claude-usage --version            # print the version and exit
+#           (respects the NO_COLOR env var — https://no-color.org)
 #           (the claude-statusline companion project renders this in a
 #            Claude Code status line, with per-segment toggles)
 #
@@ -69,6 +71,9 @@
 #             The legacy un-suffixed entry is only used for ~/.claude.
 #           - Keep the TTL sane; hammering the endpoint gets rate-limited.
 # ============================================================================
+
+# Version, printed by `claude-usage --version`. Bump on release + tag.
+typeset -g CLAUDE_USAGE_VERSION="0.2.0"
 
 # The API reports credits worth $0.01 — divide by 100 for dollars.
 export CLAUDE_USAGE_DIVISOR="${CLAUDE_USAGE_DIVISOR:-100}"
@@ -230,6 +235,7 @@ claude-usage() {
       --theme=*)  theme_override="${1#--theme=}" ;;
       --no-color|--no-colour) nocolor=1 ;;
       --list-themes) print "default mono ascii bright neon"; return 0 ;;
+      --version|-V) print "claude-usage $CLAUDE_USAGE_VERSION"; return 0 ;;
       --fresh)      force=1 ;;
       --no-block)   noblock=1 ;;
       --dir)
@@ -237,7 +243,7 @@ claude-usage() {
         dir="$2"; shift ;;
       --dir=*)    dir="${1#--dir=}" ;;
       -h|--help)
-        print "usage: claude-usage [--dir PATH] [--pretty|--text-only|--json|--raw] [--theme NAME|--no-color] [--show-reset=true|false] [--sep STR] [--fresh|--no-block]"
+        print "usage: claude-usage [--dir PATH] [--pretty|--text-only|--json|--raw] [--theme NAME|--no-color] [--show-reset=true|false] [--sep STR] [--fresh|--no-block] [--version]"
         print "themes: default mono ascii bright neon  (also --list-themes)"
         return 0 ;;
       *)
@@ -291,7 +297,9 @@ claude-usage() {
   fi
   [[ -n ${CLAUDE_USAGE_BRACKETS+x} ]] && { lbr="${CLAUDE_USAGE_BRACKETS%%:*}"; rbr="${CLAUDE_USAGE_BRACKETS#*:}"; }
   [[ -n ${CLAUDE_USAGE_DIM+x} ]] && dim="$CLAUDE_USAGE_DIM"
-  (( nocolor )) && { clo='' cmid='' chi='' dim=''; }
+  # --no-color, or the NO_COLOR convention (https://no-color.org: any non-empty
+  # value), strips every SGR while keeping the bars — unlike --text-only.
+  if (( nocolor )) || [[ -n ${NO_COLOR:-} ]]; then clo='' cmid='' chi='' dim=''; fi
 
   local cache; cache=$(_claude_usage_cache_path "$dir")
 

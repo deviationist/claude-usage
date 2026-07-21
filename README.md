@@ -69,7 +69,12 @@ claude-usage --no-block               # statusline mode: never blocks, silent on
 claude-usage --dir PATH               # another account's Claude config dir
 claude-usage --sep ' / '              # custom metric delimiter (both modes)
 claude-usage --show-reset=false       # drop the 5h reset countdown
+claude-usage --version                # print version and exit
 ```
+
+`--pretty` respects the [`NO_COLOR`](https://no-color.org) convention: set
+`NO_COLOR` to any non-empty value and colour is suppressed (bars kept), same as
+`--no-color`.
 
 Both `--pretty` and `--text-only` order the metrics with the 5h window last
 (next to the reset countdown).
@@ -152,6 +157,17 @@ constantly-repainting statusline can't hammer the endpoint.
   disappear without notice.
 - Keep the TTL sane — hammering the endpoint gets rate-limited. The defaults are
   tuned for a statusline that repaints often.
+
+## Development
+
+```sh
+zsh -n claude-usage.zsh   # syntax check
+zsh test/run.zsh          # test suite (hermetic — no network)
+```
+
+The tests seed a fresh cache for a throwaway account dir and assert against the
+rendered output, so they never touch the network or your real credentials. CI
+runs the same on every push/PR. See [AGENTS.md](AGENTS.md) for the internals.
 
 ## License
 
