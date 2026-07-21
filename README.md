@@ -4,12 +4,22 @@ Your Claude account's spend / rate-limit usage in the terminal — **straight fr
 Anthropic's own server-side counter**, not from parsing local transcripts.
 
 ```
-$ claude-usage
-7d▕██░░░░░░░░▏20% · Opus▕██▊░░░░░░░▏27% · 5h▕████▉░░░░░▏49% Reset 1h8m
+╭─ zsh ────────────────────────────────────────────────────── claude-usage ─╮
 
-$ claude-usage --text-only
-7d 20% | Opus 27% | 5h 49% Reset 1h8m
+   ❯ claude-usage
+   7d▕██░░░░░░░░▏20% · Opus▕██▊░░░░░░░▏27% · 5h▕████▉░░░░░▏49%  Reset 1h8m
+
+   ❯ claude-usage --text-only
+   7d 20% │ Opus 27% │ 5h 49% Reset 1h8m
+
+   ❯ claude-usage --dir ~/.claude-work      # a USD-budget seat
+   $142.50/$300 ▕████▊░░░░░▏48%
+
+╰───────────────────────────────────────────────────────────────────────────╯
 ```
+
+(Bars are green / amber / red by fill in a real terminal — the colour doesn't
+survive a README code block.)
 
 `claude-usage` reads the same OAuth usage endpoint that
 claude.ai → Settings → Usage shows, so it reports **all** usage billed to the
