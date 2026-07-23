@@ -73,9 +73,11 @@ out_work=$(claude-usage --dir "$tmp/work")
 out_text=$(claude-usage --dir "$tmp/max" --text-only)
 
 # ---- ANSI → SVG ------------------------------------------------------------
-# Catppuccin Mocha chrome (matches grove's README screenshot palette); basic
-# ANSI colours map to their Mocha equivalents, 256/truecolor SGRs convert
-# exactly.
+# Catppuccin Mocha chrome (matches grove's README screenshot palette).
+# Basic ANSI colours are terminal-dependent, so the SVG has to pick a
+# rendition: we use the VS Code terminal palette — vivid and ubiquitous, so
+# the "default" theme in the image matches what most real terminals show —
+# with normal vs bright kept DISTINCT. 256/truecolor SGRs convert exactly.
 BG='#1e1e2e'  BAR='#181825'  FG='#cdd6f4'  DIMC='#9399b2'
 DOT1='#f38ba8' DOT2='#f9e2af' DOT3='#a6e3a1'
 FONT="'Cascadia Code','Fira Code',SFMono-Regular,Consolas,Menlo,monospace"
@@ -85,10 +87,13 @@ integer FS=13 LH=20 TH=30 PX=20 PY=14
 sgr_fill() {
   local p=$1
   case $p in
-    2)      print -rn -- "$DIMC"; return ;;
-    31|91)  print -rn '#f38ba8'; return ;;
-    32|92)  print -rn '#a6e3a1'; return ;;
-    33|93)  print -rn '#f9e2af'; return ;;
+    2)   print -rn -- "$DIMC"; return ;;
+    31)  print -rn '#cd3131'; return ;;   # VS Code red
+    32)  print -rn '#0dbc79'; return ;;   # VS Code green
+    33)  print -rn '#e5e510'; return ;;   # VS Code yellow
+    91)  print -rn '#f14c4c'; return ;;   # VS Code bright red
+    92)  print -rn '#23d18b'; return ;;   # VS Code bright green
+    93)  print -rn '#f5f543'; return ;;   # VS Code bright yellow
   esac
   local -a c=(${(s:;:)p})
   if (( ${#c} == 5 )) && [[ $c[1] == 38 && $c[2] == 2 ]]; then
