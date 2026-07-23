@@ -10,9 +10,11 @@
 #
 # Usage:    claude-usage                      # default account (~/.claude), colour bars
 #           claude-usage --text-only          # plain one-liner, no bars/colour
-#           claude-usage --theme bright       # pick a preset (default/mono/ascii/bright/neon)
+#           claude-usage --theme labelled     # pick a preset (--list-themes for names)
 #           claude-usage --no-color           # keep the bars, drop all colour
 #           claude-usage --list-themes        # print the built-in preset names
+#           claude-usage --themes             # preview: render your current
+#                                             # usage once per theme
 #           claude-usage --show-reset=false   # drop the trailing reset countdown
 #           claude-usage --show-spend=false   # hide the monthly $-cap segment
 #                                             # (combined view only — a $-cap-only
@@ -70,11 +72,20 @@
 #           CLAUDE_USAGE_TTL       cache max age in seconds before a background
 #                                  refresh is triggered (default: 120)
 #
-# Theming:  --pretty output is themed. Pick a preset with --theme NAME (or
-#           CLAUDE_USAGE_THEME): default, mono (no colour), ascii (ASCII glyphs
-#           + colour, for fonts without block chars), bright (bright ANSI), neon
-#           (256-colour). --no-color drops colour from any theme but keeps bars.
-#           Fine-grained overrides layer on top of the chosen theme:
+# Theming:  a theme is a FULL-CONFIG PRESET — colours/glyphs for the bars
+#           (pretty mode) plus optional layout defaults (separators, section/
+#           reset prefixes, bar width) that apply to both output modes. Pick
+#           one with --theme NAME (or CLAUDE_USAGE_THEME). Bar styles:
+#           default / mono / ascii / bright / neon / retro ("[====>....]") /
+#           shade ("▓▓▒░░") / dots ("●●◑○○") / spark ("██▅▁▁") / line
+#           ("━━╸──"). Truecolor palettes: catppuccin / dracula / nord /
+#           gruvbox. Layouts: labelled ("Credit:"/"Plan:"/"Reset" labels) /
+#           compact (5-cell bars, no brackets, tight separators). `--themes`
+#           previews every one against your live usage. --no-color drops
+#           colour from any theme but keeps bars.
+#           Explicit values always beat the theme, whatever their source
+#           (flag, env var, or config file). Fine-grained overrides layer on
+#           top of the chosen theme:
 #           CLAUDE_USAGE_COLORS      low:mid:high SGR params  (e.g. 32:33:31,
 #                                    92:93:91, or 38;5;46:38;5;226:38;5;196; ""=none)
 #           CLAUDE_USAGE_THRESHOLDS  amber:red fill breakpoints (e.g. 70:90)
@@ -121,7 +132,7 @@
 # ============================================================================
 
 # Version, printed by `claude-usage --version`. Bump on release + tag.
-typeset -g CLAUDE_USAGE_VERSION="0.3.0"
+typeset -g CLAUDE_USAGE_VERSION="0.4.0"
 
 # The API reports credits worth $0.01 — divide by 100 for dollars.
 export CLAUDE_USAGE_DIVISOR="${CLAUDE_USAGE_DIVISOR:-100}"
@@ -290,14 +301,20 @@ claude-usage() {
   # Prefix put before EVERY window countdown (trailing 5h one included), so
   # all resets render in one style. Default "" (compact: "14m", "3d21h");
   # e.g. --reset-prefix "Reset " labels them all.
-  local reset_prefix="${CLAUDE_USAGE_RESET_PREFIX-}"
+  # The *_set flags record an explicit choice (env/config/flag) — themes only
+  # fill fields the user hasn't set.
+  local reset_prefix="${CLAUDE_USAGE_RESET_PREFIX-}" rpfx_set=0
+  [[ -n ${CLAUDE_USAGE_RESET_PREFIX+x} ]] && rpfx_set=1
   # Section prefixes: text inserted before the dollar group and before the
   # plan-limit group (e.g. "Spend: " / "Limits: "). Default "" — no labels.
   # Include your own trailing space; dimmed in pretty mode.
-  local spend_prefix="${CLAUDE_USAGE_SPEND_PREFIX-}"
-  local limits_prefix="${CLAUDE_USAGE_LIMITS_PREFIX-}"
+  local spend_prefix="${CLAUDE_USAGE_SPEND_PREFIX-}" sppfx_set=0
+  [[ -n ${CLAUDE_USAGE_SPEND_PREFIX+x} ]] && sppfx_set=1
+  local limits_prefix="${CLAUDE_USAGE_LIMITS_PREFIX-}" limpfx_set=0
+  [[ -n ${CLAUDE_USAGE_LIMITS_PREFIX+x} ]] && limpfx_set=1
   local divisor="${CLAUDE_USAGE_DIVISOR:-1}"
-  local bar_width="${CLAUDE_USAGE_BAR_WIDTH:-10}"
+  local bar_width="${CLAUDE_USAGE_BAR_WIDTH:-10}" bw_set=0
+  [[ -n ${CLAUDE_USAGE_BAR_WIDTH+x} ]] && bw_set=1
   # Separator between metrics. Empty → per-mode default (" | " text, " · " pretty).
   local sep_override="${CLAUDE_USAGE_SEP-}" sep_set=0
   [[ -n ${CLAUDE_USAGE_SEP+x} ]] && sep_set=1
@@ -309,6 +326,10 @@ claude-usage() {
   # Theme (pretty mode): --theme > CLAUDE_USAGE_THEME > "default". --no-color
   # forces all colour off regardless of theme (keeps the bars, unlike --text-only).
   local theme_override="" nocolor=0
+  # Canonical theme list — used by --list-themes, --themes, and the
+  # unknown-theme error. Keep in sync with the case table below.
+  local -a all_themes=(default mono ascii bright neon labelled catppuccin \
+                       compact retro shade dots spark line dracula nord gruvbox)
 
   # Account dir: --dir > CLAUDE_USAGE_DIR > CLAUDE_CONFIG_DIR > ~/.claude.
   # Deliberately profile-agnostic: no coupling to claude-profile.zsh or any
@@ -343,16 +364,16 @@ claude-usage() {
         [[ $show_limit_resets == (true|false) ]] || { print -u2 "claude-usage: --show-limit-resets takes true or false"; return 1 } ;;
       --reset-prefix)
         [[ -n "${2+x}" ]] || { print -u2 "claude-usage: --reset-prefix requires a value"; return 1 }
-        reset_prefix="$2"; shift ;;
-      --reset-prefix=*) reset_prefix="${1#--reset-prefix=}" ;;
+        reset_prefix="$2"; rpfx_set=1; shift ;;
+      --reset-prefix=*) reset_prefix="${1#--reset-prefix=}"; rpfx_set=1 ;;
       --spend-prefix)
         [[ -n "${2+x}" ]] || { print -u2 "claude-usage: --spend-prefix requires a value"; return 1 }
-        spend_prefix="$2"; shift ;;
-      --spend-prefix=*) spend_prefix="${1#--spend-prefix=}" ;;
+        spend_prefix="$2"; sppfx_set=1; shift ;;
+      --spend-prefix=*) spend_prefix="${1#--spend-prefix=}"; sppfx_set=1 ;;
       --limits-prefix)
         [[ -n "${2+x}" ]] || { print -u2 "claude-usage: --limits-prefix requires a value"; return 1 }
-        limits_prefix="$2"; shift ;;
-      --limits-prefix=*) limits_prefix="${1#--limits-prefix=}" ;;
+        limits_prefix="$2"; limpfx_set=1; shift ;;
+      --limits-prefix=*) limits_prefix="${1#--limits-prefix=}"; limpfx_set=1 ;;
       --sep)
         [[ -n "${2+x}" ]] || { print -u2 "claude-usage: --sep requires a value"; return 1 }
         sep_override="$2"; sep_set=1; shift ;;
@@ -366,7 +387,8 @@ claude-usage() {
         theme_override="$2"; shift ;;
       --theme=*)  theme_override="${1#--theme=}" ;;
       --no-color|--no-colour) nocolor=1 ;;
-      --list-themes) print "default mono ascii bright neon"; return 0 ;;
+      --list-themes) print "${(j: :)all_themes}"; return 0 ;;
+      --themes|--preview-themes) mode=themes ;;
       --version|-V) print "claude-usage $CLAUDE_USAGE_VERSION"; return 0 ;;
       --fresh)      force=1 ;;
       --no-block)   noblock=1 ;;
@@ -375,11 +397,11 @@ claude-usage() {
         dir="$2"; shift ;;
       --dir=*)    dir="${1#--dir=}" ;;
       -h|--help)
-        print "usage: claude-usage [--dir PATH] [--pretty|--text-only|--json|--raw] [--theme NAME|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--fresh|--no-block] [--version]"
-        print "themes: default mono ascii bright neon  (also --list-themes)"
+        print "usage: claude-usage [--dir PATH] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--fresh|--no-block] [--version]"
+        print "themes: ${(j: :)all_themes}  (--list-themes to script it, --themes to preview)"
         return 0 ;;
       *)
-        print -u2 "usage: claude-usage [--dir PATH] [--pretty|--text-only|--json|--raw] [--theme NAME|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--fresh|--no-block]"
+        print -u2 "usage: claude-usage [--dir PATH] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--fresh|--no-block]"
         return 1 ;;
     esac
     shift
@@ -390,6 +412,17 @@ claude-usage() {
   [[ $show_balance      == (true|false) ]] || show_balance=true
   [[ $show_limit_resets == (true|false) ]] || show_limit_resets=true
 
+  # ---- --themes: preview — render the current usage once per theme ---------
+  if [[ $mode == themes ]]; then
+    local _t _first=1
+    for _t in "${all_themes[@]}"; do
+      (( _first )) && _first=0 || print    # blank line between examples
+      printf '%-11s ' "$_t"
+      claude-usage --dir "$dir" --theme "$_t"
+    done
+    return 0
+  fi
+
   # ---- Theme resolution (pretty mode) ---------------------------------------
   # A theme is: 3 colours (low/mid/high fill) + 2 thresholds + 3 bar glyphs
   # (full / partial-ramp / empty) + 2 brackets + a dim SGR for separators.
@@ -397,6 +430,11 @@ claude-usage() {
   # gpartial is a low→high ramp of fractional-cell glyphs ("" = no partial cell).
   local theme="${theme_override:-${CLAUDE_USAGE_THEME:-default}}"
   local clo cmid chi tmid thi gfull gpartial gempty lbr rbr dim _a _b
+  # Themes may also preset LAYOUT config (separators, prefixes, bar width) —
+  # a theme is a full-config preset, not just colours. Empty = keep the
+  # standard default; an explicit --flag/env/config value always beats the
+  # theme (the *_set flags gate the application below).
+  local tsep='' tgsep='' trpfx='' tsppfx='' tlimpfx='' twidth=''
   case "$theme" in
     default)
       clo=32 cmid=33 chi=31; tmid=70 thi=90
@@ -413,10 +451,68 @@ claude-usage() {
     neon)          # vivid 256-colour, unicode bars
       clo='38;5;46' cmid='38;5;226' chi='38;5;196'; tmid=70 thi=90
       gfull='█' gpartial='▏▎▍▌▋▊▉' gempty='░'; lbr='▕' rbr='▏'; dim=2 ;;
+    labelled)      # default look + section/reset labels ("Credit: … | Plan: …")
+      clo=32 cmid=33 chi=31; tmid=70 thi=90
+      gfull='█' gpartial='▏▎▍▌▋▊▉' gempty='░'; lbr='▕' rbr='▏'; dim=2
+      trpfx='Reset ' tsppfx='Credit: ' tlimpfx='Plan: ' ;;
+    catppuccin)    # truecolor Catppuccin Mocha (the README screenshot palette)
+      clo='38;2;166;227;161' cmid='38;2;249;226;175' chi='38;2;243;139;168'
+      tmid=70 thi=90
+      gfull='█' gpartial='▏▎▍▌▋▊▉' gempty='░'; lbr='▕' rbr='▏'
+      dim='38;2;147;153;178' ;;
+    compact)       # tightest statusline fit: 5-cell bars, no brackets,
+                   # single-space separators
+      clo=32 cmid=33 chi=31; tmid=70 thi=90
+      gfull='█' gpartial='▏▎▍▌▋▊▉' gempty='░'; lbr='' rbr=''; dim=2
+      tsep=' ' tgsep=' | ' twidth=5 ;;
+    retro)         # arcade loading bar "[====>....]" in CRT phosphor:
+                   # green tube → amber warning → alarm red, greenish dim
+      clo='38;5;40' cmid='38;5;214' chi='38;5;196'; tmid=70 thi=90
+      gfull='=' gpartial='>' gempty='.'; lbr='[' rbr=']'; dim='38;5;65' ;;
+    shade)         # DOS shade blocks "▓▓▓▒░░░" on ice: cyan → gold → salmon,
+                   # slate dim
+      clo='38;5;81' cmid='38;5;221' chi='38;5;203'; tmid=70 thi=90
+      gfull='▓' gpartial='░▒' gempty='░'; lbr='▕' rbr='▏'; dim='38;5;60' ;;
+    dots)          # dot meter "●●◑○○" in candy pastels: mint → peach →
+                   # hot pink, lavender dim (5 wide — dots read better short)
+      clo='38;5;114' cmid='38;5;216' chi='38;5;205'; tmid=70 thi=90
+      gfull='●' gpartial='◔◑◕' gempty='○'; lbr=' ' rbr=' '; dim='38;5;103'
+      twidth=5 ;;
+    spark)         # sparkline ramp "██▅▁▁▁", electric: cyan → orange →
+                   # hot red, storm-blue dim
+      clo='38;5;45' cmid='38;5;214' chi='38;5;197'; tmid=70 thi=90
+      gfull='█' gpartial='▁▂▃▄▅▆▇' gempty='▁'; lbr='' rbr=''; dim='38;5;66' ;;
+    line)          # slim gauge "━━━╸────", understated: periwinkle → gold →
+                   # rose, grey-violet dim
+      clo='38;5;147' cmid='38;5;179' chi='38;5;168'; tmid=70 thi=90
+      gfull='━' gpartial='╸' gempty='─'; lbr='' rbr=''; dim='38;5;102' ;;
+    dracula)       # truecolor Dracula palette
+      clo='38;2;80;250;123' cmid='38;2;241;250;140' chi='38;2;255;85;85'
+      tmid=70 thi=90
+      gfull='█' gpartial='▏▎▍▌▋▊▉' gempty='░'; lbr='▕' rbr='▏'
+      dim='38;2;98;114;164' ;;
+    nord)          # truecolor Nord palette
+      clo='38;2;163;190;140' cmid='38;2;235;203;139' chi='38;2;191;97;110'
+      tmid=70 thi=90
+      gfull='█' gpartial='▏▎▍▌▋▊▉' gempty='░'; lbr='▕' rbr='▏'
+      dim='38;2;76;86;106' ;;
+    gruvbox)       # truecolor Gruvbox palette
+      clo='38;2;184;187;38' cmid='38;2;250;189;47' chi='38;2;251;73;52'
+      tmid=70 thi=90
+      gfull='█' gpartial='▏▎▍▌▋▊▉' gempty='░'; lbr='▕' rbr='▏'
+      dim='38;2;146;131;116' ;;
     *)
-      print -u2 "claude-usage: unknown theme '$theme' (valid: default mono ascii bright neon)"
+      print -u2 "claude-usage: unknown theme '$theme' (valid: ${(j: :)all_themes})"
       return 1 ;;
   esac
+
+  # Apply the theme's layout presets to anything not explicitly set
+  (( sep_set ))    || { [[ -n $tsep  ]] && { sep_override="$tsep";  sep_set=1;  } }
+  (( gsep_set ))   || { [[ -n $tgsep ]] && { gsep_override="$tgsep"; gsep_set=1; } }
+  (( rpfx_set ))   || reset_prefix="$trpfx"
+  (( sppfx_set ))  || spend_prefix="$tsppfx"
+  (( limpfx_set )) || limits_prefix="$tlimpfx"
+  (( bw_set ))     || { [[ -n $twidth ]] && bar_width="$twidth" }
 
   # Per-field overrides layered on top of the theme. Manual %%/# splitting
   # (not (s.:.)) so empty fields survive — e.g. BAR_CHARS='#::.' = no partial.
