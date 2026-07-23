@@ -317,16 +317,26 @@ claude-usage --dir $rl --json | jq -e '(.limits|length)==3 and (.limits[0].label
 claude-usage --dir $combo --json | jq -e '.spend.limit==40 and .spend.balance==100 and .spend.enabled==true and (.limits|length)==3' >/dev/null \
   && ok "json combined shape" || bad "json combined shape" "$(claude-usage --dir $combo --json)"
 
-# ---- README SVG generator (smoke; explicit output path → README untouched) -
-svg="$tmp/demo-test.svg"
-zsh "$root/tools/generate-readme-svg.zsh" "$svg" >/dev/null 2>&1
+# ---- README SVG generator (smoke; explicit output paths → README untouched) -
+svg="$tmp/demo-test.svg"; tsvg="$tmp/themes-test.svg"
+zsh "$root/tools/generate-readme-svg.zsh" "$svg" "$tsvg" >/dev/null 2>&1
 if [[ -s $svg ]] && grep -q '</svg>' "$svg" \
    && grep -q '<tspan fill="#a6e3a1">' "$svg" \
    && grep -q '<tspan fill="#f38ba8">' "$svg" \
    && ! grep -q $'\e' "$svg"; then
-  ok "svg generator"
+  ok "svg generator (demo)"
 else
-  bad "svg generator" "$(head -c 200 "$svg" 2>/dev/null)"
+  bad "svg generator (demo)" "$(head -c 200 "$svg" 2>/dev/null)"
+fi
+# themes SVG: truecolor passthrough (catppuccin a6e3a1) + 256-cube math
+# (retro 38;5;40 → #00d700), every theme name present, no stray ESC
+if [[ -s $tsvg ]] && grep -q '</svg>' "$tsvg" \
+   && grep -q '<tspan fill="#00d700">' "$tsvg" \
+   && grep -q 'gruvbox' "$tsvg" && grep -q 'catppuccin' "$tsvg" \
+   && ! grep -q $'\e' "$tsvg"; then
+  ok "svg generator (themes)"
+else
+  bad "svg generator (themes)" "$(head -c 200 "$tsvg" 2>/dev/null)"
 fi
 
 # ---- meta flags -----------------------------------------------------------
