@@ -14,6 +14,28 @@
 #           claude-usage --no-color           # keep the bars, drop all colour
 #           claude-usage --list-themes        # print the built-in preset names
 #           claude-usage --show-reset=false   # drop the trailing reset countdown
+#           claude-usage --show-spend=false   # hide the monthly $-cap segment
+#                                             # (combined view only — a $-cap-only
+#                                             # seat always shows it)
+#           claude-usage --show-balance=false # hide the credit-balance segment
+#           claude-usage --show-spend-reset=false  # drop the monthly-cap reset
+#                                             # date (shown by default; derived
+#                                             # locally — 1st of next month — the
+#                                             # API doesn't report it)
+#           claude-usage --show-limit-resets=false # drop the per-window reset
+#                                             # countdowns on the 7d/model limits
+#           claude-usage --reset-prefix 'Reset '   # label every reset — window
+#                                             # countdowns AND the monthly-cap
+#                                             # date (default '' — bare
+#                                             # "14m"/"3d21h"/"Aug 1")
+#           claude-usage --spend-prefix 'Spend: '  # label before the $-group
+#           claude-usage --limits-prefix 'Limits: ' # label before the plan
+#                                             # limits (both default '', dimmed
+#                                             # in pretty; bring your own
+#                                             # trailing space)
+#           claude-usage --group-sep ' ┃ '    # separator between the $-group and
+#                                             # the plan limits (default " || "
+#                                             # text, " | " pretty)
 #           claude-usage --sep ' / '          # custom metric delimiter (both modes)
 #           claude-usage --dir PATH           # another account's Claude config dir
 #           claude-usage --json               # machine-readable summary
@@ -26,7 +48,22 @@
 #           (the claude-statusline companion project renders this in a
 #            Claude Code status line, with per-segment toggles)
 #
-# Env:      CLAUDE_USAGE_DIR       default config dir (default: ~/.claude)
+# Env:      CLAUDE_USAGE_CONFIG    config-file path (default:
+#                                  ~/.config/claude-usage/config). Any
+#                                  CLAUDE_USAGE_* key below can live there as
+#                                  plain NAME=value lines — read by the
+#                                  function itself in any process, so it works
+#                                  where shell exports don't reach (statusline
+#                                  repaints). Precedence: flags > config > env.
+#           CLAUDE_USAGE_DIR       default config dir (default: ~/.claude)
+#           CLAUDE_USAGE_SHOW_SPEND    default for --show-spend (true)
+#           CLAUDE_USAGE_SHOW_BALANCE  default for --show-balance (true)
+#           CLAUDE_USAGE_SHOW_SPEND_RESET  default for --show-spend-reset (true)
+#           CLAUDE_USAGE_SHOW_LIMIT_RESETS default for --show-limit-resets (true)
+#           CLAUDE_USAGE_GROUP_SEP         dollar-group / plan-limit separator
+#           CLAUDE_USAGE_RESET_PREFIX      default for --reset-prefix ('')
+#           CLAUDE_USAGE_SPEND_PREFIX      default for --spend-prefix ('')
+#           CLAUDE_USAGE_LIMITS_PREFIX     default for --limits-prefix ('')
 #           CLAUDE_USAGE_DIVISOR   credits→dollars divisor (default: 100 = cents)
 #           CLAUDE_USAGE_BAR_WIDTH cells per bar in --pretty (default: 10)
 #           CLAUDE_USAGE_SEP       metric delimiter, both modes (default: per-mode)
@@ -47,11 +84,22 @@
 #           CLAUDE_USAGE_DIM         SGR for separators/reset (default 2; ""=none)
 #
 # Output:   Default (--pretty), USD cap:  "$300.04/$300 ▕████▏100%"
-#           Default (--pretty), Max/Pro:  "7d▕██░░▏40% · opus▕███░▏63% · 5h▕█░░░░▏12% Reset 4h45m"
-#           --text-only, Max/Pro:         "7d 40% | opus 63% | 5h 12% Reset 4h45m"
-#           Both order 5h last (next to Reset). --show-reset (default true)
-#           appends the 5h-session countdown; --sep / CLAUDE_USAGE_SEP overrides
-#           the delimiter for both modes.
+#           Default (--pretty), Max/Pro:  "7d▕██░░▏40% 3d21h · opus▕███░▏63% 3d21h · 5h▕█░░░░▏12% 4h45m"
+#           Max/Pro + usage credits:      "$0/$40 ▕░░░░▏0% Aug 1 | 7d▕██░░▏40% 3d21h · … 4h45m"
+#           (both the plan windows and the credits budget exist → both render;
+#            the dollar group leads — separated from the plan limits by the
+#            group separator (--group-sep; default " || " text, " | " pretty)
+#            since they are different mechanisms — and is dropped while
+#            credits are toggled off. A "bal $100" purchased-credit segment
+#            follows the $-cap whenever the API reports spend.balance — null
+#            server-side so far. Non-session limits carry their own reset
+#            countdown ("3d21h") from resets_at. Toggles: --show-spend,
+#            --show-balance, --show-spend-reset, --show-limit-resets.)
+#           --text-only, Max/Pro:         "7d 40% 3d21h | opus 63% 3d21h | 5h 12% 4h45m"
+#           Both order 5h last (next to its countdown). --show-reset (default
+#           true) appends the 5h-session countdown; every countdown takes the
+#           same --reset-prefix label (default none); --sep / CLAUDE_USAGE_SEP
+#           overrides the delimiter for both modes.
 #
 # Caching:  stale-while-revalidate, PER ACCOUNT (cache file is derived from the
 #           config dir, so multiple accounts never clobber each other). Bare
@@ -73,7 +121,7 @@
 # ============================================================================
 
 # Version, printed by `claude-usage --version`. Bump on release + tag.
-typeset -g CLAUDE_USAGE_VERSION="0.2.0"
+typeset -g CLAUDE_USAGE_VERSION="0.3.0"
 
 # The API reports credits worth $0.01 — divide by 100 for dollars.
 export CLAUDE_USAGE_DIVISOR="${CLAUDE_USAGE_DIVISOR:-100}"
@@ -200,12 +248,64 @@ _claude_usage_refresh() {
 # ----------------------------------------------------------------------------
 claude-usage() {
   emulate -L zsh
+  setopt extended_glob   # for the '#'-quantifier patterns in the config parser
+
+  # ---- Optional config file -------------------------------------------------
+  # ${CLAUDE_USAGE_CONFIG:-~/.config/claude-usage/config}: plain
+  # "CLAUDE_USAGE_*=value" lines (quotes around the value optional; # comments
+  # allowed). Each key is declared LOCAL before assignment, so nothing leaks
+  # into the interactive shell. Precedence: flags > config file > process env
+  # (config-over-env mirrors claude-statusline). This is the reliable way to
+  # configure statusline rendering: the repaint subprocess doesn't inherit
+  # your interactive shell's un-exported vars, but it always reads this file.
+  local _cfg="${CLAUDE_USAGE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/claude-usage/config}"
+  if [[ -f $_cfg ]]; then
+    local _line _k _v
+    while IFS= read -r _line || [[ -n $_line ]]; do
+      _line="${_line##[[:space:]]#}"
+      [[ -z $_line || $_line == '#'* || $_line != *=* ]] && continue
+      _k="${_line%%=*}"; _v="${_line#*=}"
+      _k="${_k%%[[:space:]]#}"
+      [[ $_k == CLAUDE_USAGE_[A-Z_]## ]] || continue
+      # strip one pair of matching surrounding quotes, if present
+      if (( ${#_v} >= 2 )) && \
+         [[ ( $_v == '"'*'"' ) || ( $_v == "'"*"'" ) ]]; then
+        _v="${_v[2,-2]}"
+      fi
+      eval "local ${_k}=\"\${_v}\""
+    done < "$_cfg"
+  fi
+
   local ttl="${CLAUDE_USAGE_TTL:-120}" mode=pretty force=0 noblock=0 show_reset=true
+  # Dollar-segment toggles (combined Max+credits view): the monthly spend cap
+  # and the purchased-credit balance. Env defaults, flags override below.
+  local show_spend="${CLAUDE_USAGE_SHOW_SPEND:-true}"
+  local show_balance="${CLAUDE_USAGE_SHOW_BALANCE:-true}"
+  # Monthly spend-cap reset date (default true). Note: the API doesn't report
+  # it, so it's derived locally (1st of next month, calendar boundary).
+  local show_spend_reset="${CLAUDE_USAGE_SHOW_SPEND_RESET:-true}"
+  # Per-window reset countdowns on the non-session limits (7d / model), from
+  # each limit's resets_at. The 5h window keeps its trailing countdown.
+  local show_limit_resets="${CLAUDE_USAGE_SHOW_LIMIT_RESETS:-true}"
+  # Prefix put before EVERY window countdown (trailing 5h one included), so
+  # all resets render in one style. Default "" (compact: "14m", "3d21h");
+  # e.g. --reset-prefix "Reset " labels them all.
+  local reset_prefix="${CLAUDE_USAGE_RESET_PREFIX-}"
+  # Section prefixes: text inserted before the dollar group and before the
+  # plan-limit group (e.g. "Spend: " / "Limits: "). Default "" — no labels.
+  # Include your own trailing space; dimmed in pretty mode.
+  local spend_prefix="${CLAUDE_USAGE_SPEND_PREFIX-}"
+  local limits_prefix="${CLAUDE_USAGE_LIMITS_PREFIX-}"
   local divisor="${CLAUDE_USAGE_DIVISOR:-1}"
   local bar_width="${CLAUDE_USAGE_BAR_WIDTH:-10}"
   # Separator between metrics. Empty → per-mode default (" | " text, " · " pretty).
   local sep_override="${CLAUDE_USAGE_SEP-}" sep_set=0
   [[ -n ${CLAUDE_USAGE_SEP+x} ]] && sep_set=1
+  # Group separator between the dollar segments (spend cap / balance — the
+  # credits system) and the plan-limit bars (a different mechanism). Defaults
+  # " || " text, " | " pretty (dimmed).
+  local gsep_override="${CLAUDE_USAGE_GROUP_SEP-}" gsep_set=0
+  [[ -n ${CLAUDE_USAGE_GROUP_SEP+x} ]] && gsep_set=1
   # Theme (pretty mode): --theme > CLAUDE_USAGE_THEME > "default". --no-color
   # forces all colour off regardless of theme (keeps the bars, unlike --text-only).
   local theme_override="" nocolor=0
@@ -225,10 +325,42 @@ claude-usage() {
       --show-reset=*)
         show_reset="${1#--show-reset=}"
         [[ $show_reset == (true|false) ]] || { print -u2 "claude-usage: --show-reset takes true or false"; return 1 } ;;
+      --show-spend)       show_spend=true ;;
+      --show-spend=*)
+        show_spend="${1#--show-spend=}"
+        [[ $show_spend == (true|false) ]] || { print -u2 "claude-usage: --show-spend takes true or false"; return 1 } ;;
+      --show-balance)     show_balance=true ;;
+      --show-balance=*)
+        show_balance="${1#--show-balance=}"
+        [[ $show_balance == (true|false) ]] || { print -u2 "claude-usage: --show-balance takes true or false"; return 1 } ;;
+      --show-spend-reset) show_spend_reset=true ;;
+      --show-spend-reset=*)
+        show_spend_reset="${1#--show-spend-reset=}"
+        [[ $show_spend_reset == (true|false) ]] || { print -u2 "claude-usage: --show-spend-reset takes true or false"; return 1 } ;;
+      --show-limit-resets) show_limit_resets=true ;;
+      --show-limit-resets=*)
+        show_limit_resets="${1#--show-limit-resets=}"
+        [[ $show_limit_resets == (true|false) ]] || { print -u2 "claude-usage: --show-limit-resets takes true or false"; return 1 } ;;
+      --reset-prefix)
+        [[ -n "${2+x}" ]] || { print -u2 "claude-usage: --reset-prefix requires a value"; return 1 }
+        reset_prefix="$2"; shift ;;
+      --reset-prefix=*) reset_prefix="${1#--reset-prefix=}" ;;
+      --spend-prefix)
+        [[ -n "${2+x}" ]] || { print -u2 "claude-usage: --spend-prefix requires a value"; return 1 }
+        spend_prefix="$2"; shift ;;
+      --spend-prefix=*) spend_prefix="${1#--spend-prefix=}" ;;
+      --limits-prefix)
+        [[ -n "${2+x}" ]] || { print -u2 "claude-usage: --limits-prefix requires a value"; return 1 }
+        limits_prefix="$2"; shift ;;
+      --limits-prefix=*) limits_prefix="${1#--limits-prefix=}" ;;
       --sep)
         [[ -n "${2+x}" ]] || { print -u2 "claude-usage: --sep requires a value"; return 1 }
         sep_override="$2"; sep_set=1; shift ;;
       --sep=*)    sep_override="${1#--sep=}"; sep_set=1 ;;
+      --group-sep)
+        [[ -n "${2+x}" ]] || { print -u2 "claude-usage: --group-sep requires a value"; return 1 }
+        gsep_override="$2"; gsep_set=1; shift ;;
+      --group-sep=*) gsep_override="${1#--group-sep=}"; gsep_set=1 ;;
       --theme)
         [[ -n "${2+x}" ]] || { print -u2 "claude-usage: --theme requires a name"; return 1 }
         theme_override="$2"; shift ;;
@@ -243,16 +375,20 @@ claude-usage() {
         dir="$2"; shift ;;
       --dir=*)    dir="${1#--dir=}" ;;
       -h|--help)
-        print "usage: claude-usage [--dir PATH] [--pretty|--text-only|--json|--raw] [--theme NAME|--no-color] [--show-reset=true|false] [--sep STR] [--fresh|--no-block] [--version]"
+        print "usage: claude-usage [--dir PATH] [--pretty|--text-only|--json|--raw] [--theme NAME|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--fresh|--no-block] [--version]"
         print "themes: default mono ascii bright neon  (also --list-themes)"
         return 0 ;;
       *)
-        print -u2 "usage: claude-usage [--dir PATH] [--pretty|--text-only|--json|--raw] [--theme NAME|--no-color] [--show-reset=true|false] [--sep STR] [--fresh|--no-block]"
+        print -u2 "usage: claude-usage [--dir PATH] [--pretty|--text-only|--json|--raw] [--theme NAME|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--fresh|--no-block]"
         return 1 ;;
     esac
     shift
   done
   dir="${dir%/}"
+  # Env-sourced toggles could hold garbage → they feed jq --argjson, sanitize.
+  [[ $show_spend        == (true|false) ]] || show_spend=true
+  [[ $show_balance      == (true|false) ]] || show_balance=true
+  [[ $show_limit_resets == (true|false) ]] || show_limit_resets=true
 
   # ---- Theme resolution (pretty mode) ---------------------------------------
   # A theme is: 3 colours (low/mid/high fill) + 2 thresholds + 3 bar glyphs
@@ -338,11 +474,22 @@ claude-usage() {
     fi
   fi
 
+  # Monthly spend-cap reset label ("" = don't show). Derived, not from the
+  # API: usage credits reset on the 1st of the next calendar month.
+  local spend_reset=""
+  if [[ $show_spend_reset == true ]]; then
+    local -a _mn=(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec)
+    spend_reset="${_mn[$(( 10#$(date +%m) % 12 + 1 ))]} 1"
+  fi
+
   # Metric separator: an explicit --sep / CLAUDE_USAGE_SEP wins for both modes;
   # otherwise each mode keeps its own default (" | " plain, " · " dimmed).
   local text_sep pretty_sep
   if (( sep_set )); then text_sep="$sep_override"; pretty_sep="$sep_override"
   else text_sep=" | "; pretty_sep=" · "; fi
+  local text_gsep pretty_gsep
+  if (( gsep_set )); then text_gsep="$gsep_override"; pretty_gsep="$gsep_override"
+  else text_gsep=" || "; pretty_gsep=" | "; fi
 
   case $mode in
     raw)
@@ -364,6 +511,7 @@ claude-usage() {
         (if (.spend.enabled // false) or ((.spend.limit // null) != null) then
            { spent: (.spend.used | money),
              limit: (.spend.limit | if . == null then null else money end),
+             balance: (.spend.balance | if . == null then null else money end),
              percent: .spend.percent,
              enabled: (.spend.enabled // false),
              source: "spend" }
@@ -372,11 +520,12 @@ claude-usage() {
             then pow(10; .extra_usage.decimal_places) else $d end) as $div |
            { spent: ((.extra_usage.used_credits  // 0) / $div),
              limit: ((.extra_usage.monthly_limit // 0) / $div),
+             balance: null,
              percent: .extra_usage.utilization,
              enabled: (.extra_usage.is_enabled // false),
              source: "extra_usage" }
          else
-           { spent: null, limit: null, percent: null, enabled: false, source: null }
+           { spent: null, limit: null, balance: null, percent: null, enabled: false, source: null }
          end) as $spend |
         {
           spend: $spend,
@@ -395,7 +544,12 @@ claude-usage() {
       # Plain one-liner (no bars, no colour): "7d 16% | Fable 25% | 5h 4%".
       # Ordered like --pretty (5h last, next to Reset); --show-reset (default)
       # appends "<sep>Reset 4h45m" from the 5h window.
-      jq -r --argjson d "$divisor" --argjson showreset "$show_reset" --arg sep "$text_sep" '
+      jq -r --argjson d "$divisor" --argjson showreset "$show_reset" \
+            --argjson showspend "$show_spend" --argjson showbal "$show_balance" \
+            --argjson showlr "$show_limit_resets" --arg rpfx "$reset_prefix" \
+            --arg sppfx "$spend_prefix" --arg limpfx "$limits_prefix" \
+            --arg spendreset "$spend_reset" --arg sep "$text_sep" \
+            --arg gsep "$text_gsep" '
         def money:
           if type == "object" then (.amount_minor // 0) / pow(10; (.exponent // 2))
           elif type == "number" then .
@@ -406,48 +560,93 @@ claude-usage() {
           elif .kind == "weekly_all" then "7d"
           elif .kind == "weekly_scoped" then (.scope.model.display_name // .scope.surface // "scoped")
           else .kind end;
+        # Countdown to an ISO timestamp: "3d20h" / "4h45m" / "45m"; "" past/absent
+        def left($r):
+          if ($r == null) then ""
+          else (try (($r | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601) - now | floor) catch -1) as $rem
+            | if $rem <= 0 then ""
+              else (($rem / 86400) | floor) as $dd
+                 | ((($rem % 86400) / 3600) | floor) as $h
+                 | ((($rem % 3600) / 60) | floor) as $m
+                 | if $dd > 0 then "\($dd)d\($h)h" elif $h > 0 then "\($h)h\($m)m" else "\($m)m" end
+              end
+          end;
+        # Per-window reset suffix on the non-session limits (7d / model);
+        # the 5h session window keeps the trailing countdown instead. $rpfx
+        # (--reset-prefix) labels both in one style.
+        def lim_left:
+          if $showlr and .kind != "session" then
+            left(.resets_at) as $t | (if $t != "" then " \($rpfx)\($t)" else "" end)
+          else "" end;
         # "!" marks non-normal severity (warning/exceeded)
-        def limit_line: "\(limit_label) \(.percent // 0 | round)%\(if (.severity // "normal") != "normal" then "!" else "" end)";
-        # Time left on the 5h session window as "4h45m" / "45m"; "" when absent.
+        def limit_line: "\(limit_label) \(.percent // 0 | round)%\(if (.severity // "normal") != "normal" then "!" else "" end)\(lim_left)";
+        # Time left on the 5h session window (trailing "Reset …" segment)
         def reset_left:
-          ([ .limits[]? | select(.kind == "session") | .resets_at ] | first) as $r
-          | if ($r == null) then ""
-            else (try (($r | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601) - now | floor) catch -1) as $rem
-              | if $rem <= 0 then ""
-                else (($rem / 3600) | floor) as $h | ((($rem % 3600) / 60) | floor) as $m
-                  | if $h > 0 then "\($h)h\($m)m" else "\($m)m" end
-                end
-            end;
+          left([ .limits[]? | select(.kind == "session") | .resets_at ] | first);
 
-        (
-          # 1) Modern spend object with a cap
+        # Monthly-reset suffix folded into the percent paren: "(0%, Aug 1)" —
+        # takes the same $rpfx label as the window countdowns
+        def rst: if $spendreset != "" then ", \($rpfx)\($spendreset)" else "" end;
+        # Dollar segment ("" when the account has no cap): modern .spend
+        # preferred, legacy .extra_usage (work seats on older schema) fallback.
+        def spend_line:
           if (.spend.limit // null) != null then
             (.spend.used | money) as $s | (.spend.limit | money) as $l |
-            "$\($s | fmt2) / $\($l | fmt2) (\(.spend.percent // (if $l > 0 then $s / $l * 100 else 0 end) | round)%)"
-          # 2) Legacy extra_usage cap (work seats on older schema)
+            "$\($s | fmt2) / $\($l | fmt2) (\(.spend.percent // (if $l > 0 then $s / $l * 100 else 0 end) | round)%\(rst))"
           elif (.extra_usage.monthly_limit // 0) > 0 then
             (if .extra_usage.decimal_places != null
              then pow(10; .extra_usage.decimal_places) else $d end) as $div |
             ((.extra_usage.used_credits  // 0) / $div) as $s |
             ((.extra_usage.monthly_limit // 0) / $div) as $l |
-            "$\($s | fmt2) / $\($l | fmt2) (\($s / $l * 100 | round)%)"
-          # 3) No USD cap: rate limits — prefer the modern limits[] array.
-          #    Non-session windows first, 5h session held last (next to Reset).
-          elif ((.limits // []) | length) > 0 then
+            "$\($s | fmt2) / $\($l | fmt2) (\($s / $l * 100 | round)%\(rst))"
+          else "" end;
+        # Is the dollar cap live? (usage credits can be toggled off in the GUI)
+        def spend_on:
+          if .spend != null then (.spend.enabled // false)
+          else (.extra_usage.is_enabled // false) end;
+        # Purchased-credit balance segment ("" until the API reports one — the
+        # field exists in the schema but is null-so-far server-side)
+        def balance_line:
+          (.spend.balance // null) as $b
+          | if $b == null then "" else "bal $\($b | money | fmt2)" end;
+
+        (
+          (spend_line) as $sp |
+          (balance_line) as $bal |
+          ((if ($bal != "" and $showbal) then [$bal] else [] end)) as $balseg |
+          # 1) Plan limits present (Max/Pro): non-session windows first, 5h
+          #    session held last (next to Reset). A dollar cap alongside them
+          #    (Max + usage credits, the overflow budget) leads the line —
+          #    shown only while the credits toggle is on; the credit balance
+          #    follows it. Both individually togglable (--show-spend/-balance).
+          if ((.limits // []) | length) > 0 then
             ([ .limits[] | select(.kind != "session") | limit_line ]) as $others |
             ([ .limits[] | select(.kind == "session") | limit_line ]) as $sess |
-            (($others + $sess) | join($sep))
-          # 4) Oldest fallback: flat five_hour / seven_day fields (5h last)
+            ((if ($sp != "" and spend_on and $showspend) then [$sp] else [] end)
+              + $balseg) as $dollars |
+            ($limpfx + (($others + $sess) | join($sep))) as $limstr |
+            # $gsep between the dollar group and the plan-limit group — they
+            # are different mechanisms, not one list of metrics. Each group
+            # takes its optional section prefix (--spend-prefix/--limits-prefix).
+            (if ($dollars | length) > 0
+             then ($sppfx + ($dollars | join($sep)) + $gsep + $limstr)
+             else $limstr end)
+          # 2) Dollar cap only (Enterprise / USD-budget seat): the cap is the
+          #    whole display, so --show-spend=false is ignored here
+          elif $sp != "" then ($sppfx + (([$sp] + $balseg) | join($sep)))
+          # 3) Oldest fallback: flat five_hour / seven_day fields (5h last)
           else
+            $limpfx +
+            (
             [ "7d \(.seven_day.utilization // 0 | round)%",
               (if (.seven_day_opus.utilization) != null
                then "opus \(.seven_day_opus.utilization | round)%" else empty end),
               (if (.seven_day_sonnet.utilization) != null
                then "sonnet \(.seven_day_sonnet.utilization | round)%" else empty end),
               "5h \(.five_hour.utilization // 0 | round)%"
-            ] | join($sep)
+            ] | join($sep))
           end
-        ) + (if $showreset then (reset_left | if . == "" then "" else " Reset \(.)" end) else "" end)
+        ) + (if $showreset then (reset_left | if . == "" then "" else " \($rpfx)\(.)" end) else "" end)
       ' "$cache"
       ;;
     pretty)
@@ -460,6 +659,10 @@ claude-usage() {
       # via CLAUDE_USAGE_BAR_WIDTH (default 10).
       jq -r --argjson d "$divisor" --argjson w "$bar_width" \
             --argjson showreset "$show_reset" --arg sep "$pretty_sep" \
+            --argjson showspend "$show_spend" --argjson showbal "$show_balance" \
+            --argjson showlr "$show_limit_resets" --arg rpfx "$reset_prefix" \
+            --arg sppfx "$spend_prefix" --arg limpfx "$limits_prefix" \
+            --arg spendreset "$spend_reset" --arg gsep "$pretty_gsep" \
             --arg clo "$clo" --arg cmid "$cmid" --arg chi "$chi" \
             --argjson tmid "$tmid" --argjson thi "$thi" \
             --arg gfull "$gfull" --arg gpartial "$gpartial" --arg gempty "$gempty" \
@@ -492,40 +695,92 @@ claude-usage() {
             + (($gempty * ($w - $used)) // "");                  # empty cells
         def bar($label; $p):
           paint(col($p); "\($label)\($lbr)\(mkbar($p))\($rbr)\($p | round)%");
+        # Countdown to an ISO timestamp: "3d20h" / "4h45m" / "45m"; "" past/absent
+        def left($r):
+          if ($r == null) then ""
+          else (try (($r | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601) - now | floor) catch -1) as $rem
+            | if $rem <= 0 then ""
+              else (($rem / 86400) | floor) as $dd
+                 | ((($rem % 86400) / 3600) | floor) as $h
+                 | ((($rem % 3600) / 60) | floor) as $m
+                 | if $dd > 0 then "\($dd)d\($h)h" elif $h > 0 then "\($h)h\($m)m" else "\($m)m" end
+              end
+          end;
+        # Per-window reset suffix (dimmed) on the non-session bars (7d / model);
+        # the 5h session bar keeps the trailing countdown instead. $rpfx
+        # (--reset-prefix) labels both in one style.
+        def lim_left:
+          if $showlr then
+            left(.resets_at) as $t | (if $t != "" then " " + paint($dim; "\($rpfx)\($t)") else "" end)
+          else "" end;
+        # Time left on the 5h session window (trailing "Reset …" segment)
         def reset_left:
-          ([ .limits[]? | select(.kind == "session") | .resets_at ] | first) as $r
-          | if ($r == null) then ""
-            else (try (($r | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601) - now | floor) catch -1) as $rem
-              | if $rem <= 0 then ""
-                else (($rem / 3600) | floor) as $h | ((($rem % 3600) / 60) | floor) as $m
-                  | if $h > 0 then "\($h)h\($m)m" else "\($m)m" end
-                end
-            end;
+          left([ .limits[]? | select(.kind == "session") | .resets_at ] | first);
         (paint($dim; $sep)) as $sep |                            # dimmed separator
 
-        (
+        # Monthly-reset suffix, dimmed, after the spend bar: " Aug 1" — takes
+        # the same $rpfx label as the window countdowns
+        def rst: if $spendreset != "" then " " + paint($dim; "\($rpfx)\($spendreset)") else "" end;
+        # Dollar bar ("" when the account has no cap): modern .spend preferred,
+        # legacy .extra_usage fallback.
+        def spend_bar:
           if (.spend.limit // null) != null then
             (.spend.used | money) as $s | (.spend.limit | money) as $l |
             (.spend.percent // (if $l > 0 then $s / $l * 100 else 0 end)) as $p |
-            paint(col($p); "$\($s | fmt2)/$\($l | fmt2) \($lbr)\(mkbar($p))\($rbr)\($p | round)%")
+            paint(col($p); "$\($s | fmt2)/$\($l | fmt2) \($lbr)\(mkbar($p))\($rbr)\($p | round)%") + rst
           elif (.extra_usage.monthly_limit // 0) > 0 then
             (if .extra_usage.decimal_places != null
              then pow(10; .extra_usage.decimal_places) else $d end) as $div |
             ((.extra_usage.used_credits  // 0) / $div) as $s |
             ((.extra_usage.monthly_limit // 0) / $div) as $l |
             (if $l > 0 then $s / $l * 100 else 0 end) as $p |
-            paint(col($p); "$\($s | fmt2)/$\($l | fmt2) \($lbr)\(mkbar($p))\($rbr)\($p | round)%")
-          elif ((.limits // []) | length) > 0 then
-            # non-session bars first, session held to the end (next to its reset)
-            ([ .limits[] | select(.kind != "session") | bar(limit_label; (.percent // 0)) ]) as $others |
+            paint(col($p); "$\($s | fmt2)/$\($l | fmt2) \($lbr)\(mkbar($p))\($rbr)\($p | round)%") + rst
+          else "" end;
+        # Is the dollar cap live? (usage credits can be toggled off in the GUI)
+        def spend_on:
+          if .spend != null then (.spend.enabled // false)
+          else (.extra_usage.is_enabled // false) end;
+        # Purchased-credit balance segment, dimmed — no percent, so no bar
+        # ("" until the API reports one; the field is null-so-far server-side)
+        def balance_seg:
+          (.spend.balance // null) as $b
+          | if $b == null then "" else paint($dim; "bal $\($b | money | fmt2)") end;
+
+        # Optional section prefix, dimmed; "" stays "" (no stray SGR bytes)
+        def secpfx($p): if $p != "" then paint($dim; $p) else "" end;
+
+        (
+          (spend_bar) as $sp |
+          (balance_seg) as $bal |
+          ((if ($bal != "" and $showbal) then [$bal] else [] end)) as $balseg |
+          # 1) Plan limits present (Max/Pro): non-session bars first, session
+          #    held to the end (next to its reset). A dollar cap alongside them
+          #    (Max + usage credits, the overflow budget) leads the line —
+          #    shown only while the credits toggle is on; the credit balance
+          #    follows it. Both individually togglable (--show-spend/-balance).
+          if ((.limits // []) | length) > 0 then
+            ([ .limits[] | select(.kind != "session") | bar(limit_label; (.percent // 0)) + lim_left ]) as $others |
             ([ .limits[] | select(.kind == "session") ] | first) as $sess |
             (if $sess != null then [ $sess | bar("5h"; (.percent // 0)) ] else [] end) as $ssegs |
-            (($others + $ssegs) | join($sep))
+            ((if ($sp != "" and spend_on and $showspend) then [$sp] else [] end)
+              + $balseg) as $dollars |
+            (secpfx($limpfx) + (($others + $ssegs) | join($sep))) as $limstr |
+            # dimmed $gsep between the dollar group and the plan-limit group —
+            # they are different mechanisms, not one list of metrics. Each
+            # group takes its optional dimmed section prefix.
+            (if ($dollars | length) > 0
+             then (secpfx($sppfx) + ($dollars | join($sep)) + paint($dim; $gsep) + $limstr)
+             else $limstr end)
+          # 2) Dollar cap only (Enterprise / USD-budget seat): the cap is the
+          #    whole display, so --show-spend=false is ignored here
+          elif $sp != "" then (secpfx($sppfx) + (([$sp] + $balseg) | join($sep)))
+          # 3) Oldest fallback: flat five_hour / seven_day fields (5h last)
           else
+            secpfx($limpfx) +
             ([ bar("7d"; (.seven_day.utilization // 0)),
                bar("5h"; (.five_hour.utilization // 0)) ] | join($sep))
           end
-        ) + (if $showreset then (reset_left | if . == "" then "" else " " + paint($dim; "Reset \(.)") end) else "" end)
+        ) + (if $showreset then (reset_left | if . == "" then "" else " " + paint($dim; "\($rpfx)\(.)") end) else "" end)
 
       ' "$cache"
       ;;
