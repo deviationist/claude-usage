@@ -3,26 +3,12 @@
 Your Claude account's spend / rate-limit usage in the terminal — **straight from
 Anthropic's own server-side counter**, not from parsing local transcripts.
 
-```
-╭─ zsh ────────────────────────────────────────────────────── claude-usage ─╮
+<p align="center">
+  <img src="assets/demo-v0.3.0-6f93be.svg" alt="claude-usage — coloured usage bars for every plan shape, straight from Anthropic's server-side counter">
+</p>
 
-   ❯ claude-usage
-   7d▕██░░░░░░░░▏20% 3d21h · Opus▕██▊░░░░░░░▏27% 3d21h · 5h▕████▉░░░░░▏49% 1h8m
-
-   ❯ claude-usage --text-only
-   7d 20% 3d21h │ Opus 27% 3d21h │ 5h 49% 1h8m
-
-   ❯ claude-usage --dir ~/.claude-work      # a USD-budget seat
-   $142.50/$300 ▕████▊░░░░░▏48% Aug 1
-
-   ❯ claude-usage                           # Max plan + usage credits enabled
-   $0/$40 ▕░░░░░░░░░░▏0% Aug 1 | 7d▕██░░░░░░░░▏20% 3d21h · 5h▕████▉░░░░░▏49% 1h8m
-
-╰───────────────────────────────────────────────────────────────────────────╯
-```
-
-(Bars are green / amber / red by fill in a real terminal — the colour doesn't
-survive a README code block.)
+(The image is genuine renderer output — `tools/generate-readme-svg.zsh` seeds
+demo caches, runs `claude-usage`, and converts the ANSI colours to SVG.)
 
 `claude-usage` reads the same OAuth usage endpoint that
 claude.ai → Settings → Usage shows, so it reports **all** usage billed to the
@@ -218,9 +204,15 @@ process env.
 ## Development
 
 ```sh
-zsh -n claude-usage.zsh   # syntax check
-zsh test/run.zsh          # test suite (hermetic — no network)
+zsh -n claude-usage.zsh              # syntax check
+zsh test/run.zsh                     # test suite (hermetic — no network)
+zsh tools/generate-readme-svg.zsh    # regenerate the README demo SVG
 ```
+
+The demo SVG is genuine renderer output (seeded caches, ANSI → SVG). The
+generator embeds the version + a random hash in the filename and rewrites the
+README's `<img>` reference — commit both. Regenerate whenever the default
+theme or the renderers change.
 
 The tests seed a fresh cache for a throwaway account dir and assert against the
 rendered output, so they never touch the network or your real credentials. CI
