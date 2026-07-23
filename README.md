@@ -7,13 +7,16 @@ Anthropic's own server-side counter**, not from parsing local transcripts.
 ╭─ zsh ────────────────────────────────────────────────────── claude-usage ─╮
 
    ❯ claude-usage
-   7d▕██░░░░░░░░▏20% · Opus▕██▊░░░░░░░▏27% · 5h▕████▉░░░░░▏49%  Reset 1h8m
+   7d▕██░░░░░░░░▏20% 3d21h · Opus▕██▊░░░░░░░▏27% 3d21h · 5h▕████▉░░░░░▏49% 1h8m
 
    ❯ claude-usage --text-only
-   7d 20% │ Opus 27% │ 5h 49% Reset 1h8m
+   7d 20% 3d21h │ Opus 27% 3d21h │ 5h 49% 1h8m
 
    ❯ claude-usage --dir ~/.claude-work      # a USD-budget seat
-   $142.50/$300 ▕████▊░░░░░▏48%
+   $142.50/$300 ▕████▊░░░░░▏48% Aug 1
+
+   ❯ claude-usage                           # Max plan + usage credits enabled
+   $0/$40 ▕░░░░░░░░░░▏0% Aug 1 | 7d▕██░░░░░░░░▏20% 3d21h · 5h▕████▉░░░░░▏49% 1h8m
 
 ╰───────────────────────────────────────────────────────────────────────────╯
 ```
@@ -24,12 +27,29 @@ survive a README code block.)
 `claude-usage` reads the same OAuth usage endpoint that
 claude.ai → Settings → Usage shows, so it reports **all** usage billed to the
 account — Claude Code on any machine *plus* claude.ai — unlike transcript-based
-tools (e.g. ccusage) that only see the box they run on. It works for both plan
-shapes:
+tools (e.g. ccusage) that only see the box they run on. It works for all three
+plan shapes:
 
 - **USD-budget seats** render `$300.04/$300 ▕████▏100%`
-- **Max / Pro seats** render their 7d / per-model / 5h rate-limit windows with a
-  reset countdown.
+- **Max / Pro seats** render their 7d / per-model / 5h rate-limit windows, each
+  with its reset countdown (`7d▕██░░▏20% 3d21h`; the 5h window's countdown
+  trails the line). All countdowns share one style — bare by default, or
+  labelled via `--reset-prefix 'Reset '`.
+- **Max / Pro + usage credits** (the overflow budget that kicks in when you hit
+  a plan limit) render both: the dollar group leads, then the plan windows —
+  `$0/$40 ▕░░░░▏0% Aug 1 | 7d▕██░░▏20% 3d21h · 5h▕████▉▏49% 1h8m`. The
+  two groups are different mechanisms, so a distinct group separator sits
+  between them (`" || "` text, dimmed `" | "` pretty — override with
+  `--group-sep`). Toggling credits off on the usage page drops the dollar
+  group again.
+
+Each piece is individually configurable: `--show-spend=false` hides the
+monthly cap (`$0/$40`), `--show-balance=false` hides the purchased-credit
+balance (`bal $100` — rendered whenever the API reports `spend.balance`; the
+field is null server-side so far), `--show-spend-reset=false` drops the
+monthly cap's reset date (`Aug 1` — derived locally as the 1st of next month,
+since the API doesn't report it), and `--show-limit-resets=false` drops the
+per-window countdowns on the 7d/model limits.
 
 It's built to be embedded in an always-on statusline: bare calls **never block**
 — they return instantly from a cache and revalidate in a detached background
@@ -69,6 +89,15 @@ claude-usage --no-block               # statusline mode: never blocks, silent on
 claude-usage --dir PATH               # another account's Claude config dir
 claude-usage --sep ' / '              # custom metric delimiter (both modes)
 claude-usage --show-reset=false       # drop the 5h reset countdown
+claude-usage --show-spend=false       # hide the monthly $-cap segment (combined view)
+claude-usage --show-balance=false     # hide the credit-balance segment
+claude-usage --show-spend-reset=false # drop the monthly-cap reset date
+claude-usage --show-limit-resets=false # drop the 7d/model reset countdowns
+claude-usage --reset-prefix 'Reset '  # label every reset — countdowns and the
+                                      # monthly-cap date (default: bare)
+claude-usage --spend-prefix 'Credit: '     # label before the dollar group
+claude-usage --limits-prefix 'Plan usage: ' # label before the plan limits
+claude-usage --group-sep ' >> '       # $-group / plan-limit separator
 claude-usage --version                # print version and exit
 ```
 
@@ -134,11 +163,39 @@ background refresh runs and the **next** call sees the new value. Failed
 refreshes never destroy the last known value and back off for 60s, so a
 constantly-repainting statusline can't hammer the endpoint.
 
+## Config file
+
+Every `CLAUDE_USAGE_*` variable below can also live in
+`~/.config/claude-usage/config` (override the path with `CLAUDE_USAGE_CONFIG`)
+as plain `NAME=value` lines — quotes around the value optional, `#` comments
+allowed:
+
+```sh
+CLAUDE_USAGE_RESET_PREFIX="Reset "
+CLAUDE_USAGE_SPEND_PREFIX="Credit: "
+CLAUDE_USAGE_LIMITS_PREFIX="Plan usage: "
+```
+
+The function reads this file itself on every invocation, in **any** process —
+which is the reliable way to configure statusline rendering: a statusline
+repaint runs in a subprocess that never sees your interactive shell's
+un-exported variables, but it always reads this file. Values are scoped to the
+function (nothing leaks into your shell). Precedence: flags > config file >
+process env.
+
 ## Environment variables
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `CLAUDE_USAGE_DIR` | `~/.claude` | Default account config dir (overridden by `--dir`). |
+| `CLAUDE_USAGE_SHOW_SPEND` | `true` | Default for `--show-spend` (monthly $-cap segment in the combined view). |
+| `CLAUDE_USAGE_SHOW_BALANCE` | `true` | Default for `--show-balance` (credit-balance segment, when the API reports one). |
+| `CLAUDE_USAGE_SHOW_SPEND_RESET` | `true` | Default for `--show-spend-reset` (monthly-cap reset date, derived locally). |
+| `CLAUDE_USAGE_SHOW_LIMIT_RESETS` | `true` | Default for `--show-limit-resets` (7d/model per-window reset countdowns). |
+| `CLAUDE_USAGE_GROUP_SEP` | per-mode | Separator between the dollar group and the plan limits (`" \|\| "` text, `" \| "` pretty by default). |
+| `CLAUDE_USAGE_RESET_PREFIX` | `""` | Default for `--reset-prefix` — label put before every reset: window countdowns and the monthly-cap date (e.g. `"Reset "`). |
+| `CLAUDE_USAGE_SPEND_PREFIX` | `""` | Default for `--spend-prefix` — label before the dollar group (e.g. `"Credit: "`; dimmed in pretty). |
+| `CLAUDE_USAGE_LIMITS_PREFIX` | `""` | Default for `--limits-prefix` — label before the plan limits (e.g. `"Plan usage: "`; dimmed in pretty). |
 | `CLAUDE_USAGE_TTL` | `120` | Cache max age (seconds) before a background refresh is triggered. |
 | `CLAUDE_USAGE_BAR_WIDTH` | `10` | Cells per bar in `--pretty`. |
 | `CLAUDE_USAGE_SEP` | per-mode | Metric delimiter for both modes (`" \| "` text, `" · "` pretty by default). |

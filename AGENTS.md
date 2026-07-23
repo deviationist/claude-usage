@@ -40,7 +40,35 @@ executed — there is no binary on `PATH`.
   entry (only for `~/.claude`). Read-only — never write these stores.
 - **Four schema fallbacks** in each renderer: modern `.spend` → legacy
   `.extra_usage` → `.limits[]` array → oldest flat `five_hour`/`seven_day`.
-  Endpoint shapes vary by plan; keep all four paths working.
+  Endpoint shapes vary by plan; keep all four paths working. The dollar cap and
+  `.limits[]` are **not mutually exclusive**: Max/Pro seats with usage credits
+  enabled return both, and the renderers show both (dollar segment first, 5h
+  last next to Reset) — the dollar segment is suppressed in that combined case
+  while the credits toggle is off (`spend.enabled` / `extra_usage.is_enabled`).
+  A dollar-cap-only seat (no `.limits[]`) renders the dollar segment regardless
+  of the toggle, as before. In the combined view the dollar group and the plan
+  limits are joined by a **group separator** (`--group-sep`; default `" || "`
+  text, dimmed `" | "` pretty) — they're different mechanisms, keep them
+  visually distinct. Related knobs, all defaulting to true:
+  `--show-spend` / `--show-balance` (balance renders only when `spend.balance`
+  is non-null — null server-side so far), `--show-spend-reset` (the date is
+  **derived locally** as the 1st of next month because the API has no monthly
+  reset field — don't present it as server data), and `--show-limit-resets`
+  (per-window countdowns on non-session limits from their `resets_at`; the 5h
+  window keeps the trailing countdown instead). Every reset — the window
+  countdowns, the trailing 5h one, and the monthly spend-cap date — takes the
+  same `--reset-prefix` label (default `""`, bare `14m`/`3d21h`/`Aug 1`), so
+  all resets render in one style. `--spend-prefix` /
+  `--limits-prefix` (default `""`) insert optional section labels before the
+  dollar group and the plan limits (dimmed in pretty; user supplies any
+  trailing space).
+- **Config file**: `claude-usage` sources
+  `${CLAUDE_USAGE_CONFIG:-~/.config/claude-usage/config}` at the top of every
+  call — plain `CLAUDE_USAGE_*=value` lines, each key declared `local` before
+  assignment so nothing leaks into the calling shell. Precedence: flags >
+  config file > process env. This exists because statusline repaints run in
+  subprocesses that don't inherit un-exported shell vars; don't "simplify" it
+  away in favour of env-only. The parser needs `extended_glob` (set locally).
 - **Theming** (pretty only): a theme sets colours / thresholds / glyphs /
   brackets / dim, then per-field `CLAUDE_USAGE_*` env vars override on top, then
   `--no-color` / `NO_COLOR` blank all SGR. Colours/glyphs are passed into jq as
