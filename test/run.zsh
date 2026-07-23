@@ -223,6 +223,61 @@ hasnot "ascii no block char" "$a" "█"
 # ---- neon theme (256-colour) ----------------------------------------------
 has "neon 256-colour" "$(claude-usage --dir $rl --show-reset=false --theme neon)" "${esc}[38;5;46m"
 
+# ---- labelled theme (full-config preset: labels via theme) ----------------
+eq "labelled theme, text" \
+  "$(claude-usage --dir $combo --text-only --show-reset=false --show-balance=false \
+       --show-spend-reset=false --theme labelled)" \
+  "Credit: \$0 / \$40 (0%) || Plan: 7d 20% | Opus 27% | 5h 49%"
+lt=$(claude-usage --dir $rlt --theme labelled)
+has "labelled theme, pretty labels"     "$lt" "Plan: "
+has "labelled theme, pretty reset word" "$lt" "Reset 4h5m"
+# explicit value beats the theme, from a flag and from env
+eq "flag beats theme" \
+  "$(claude-usage --dir $rl --text-only --show-reset=false --theme labelled --limits-prefix 'X: ')" \
+  "X: 7d 20% | Opus 27% | 5h 49%"
+eq "env beats theme" \
+  "$(CLAUDE_USAGE_LIMITS_PREFIX='' claude-usage --dir $rl --text-only --show-reset=false --theme labelled)" \
+  "7d 20% | Opus 27% | 5h 49%"
+
+# ---- catppuccin theme (truecolor) -----------------------------------------
+has "catppuccin truecolor" \
+  "$(claude-usage --dir $rl --show-reset=false --theme catppuccin)" "${esc}[38;2;166;227;161m"
+
+# ---- glyph themes ----------------------------------------------------------
+rt=$(claude-usage --dir $rl --show-reset=false --theme retro)
+has    "retro arcade bar"  "$rt" "[==........]"     # 20% of 10 = 2 full
+hasnot "retro no blocks"   "$rt" "█"
+has "retro phosphor colour" "$rt" "${esc}[38;5;40m"
+sh=$(claude-usage --dir $rl --show-reset=false --theme shade)
+has "shade blocks"      "$sh" "▓▓"
+has "shade ice colour"  "$sh" "${esc}[38;5;81m"
+dt=$(claude-usage --dir $rl --show-reset=false --theme dots)
+has "dots meter"        "$dt" "●○○○"
+has "dots candy colour" "$dt" "${esc}[38;5;114m"
+has "spark ramp"    "$(claude-usage --dir $rl --show-reset=false --theme spark)" "██▁"
+has "line gauge"    "$(claude-usage --dir $rl --show-reset=false --theme line)"  "━━"
+has "dracula truecolor" \
+  "$(claude-usage --dir $rl --show-reset=false --theme dracula)" "${esc}[38;2;80;250;123m"
+
+# ---- --themes preview (one line per theme + blank spacer between) ----------
+tp=$(claude-usage --dir $rl --show-reset=false --themes 2>/dev/null)
+themecount=$(claude-usage --list-themes | wc -w | tr -d ' ')
+# N rendered lines + N-1 blank spacers ($(...) strips the trailing newline)
+eq "themes preview line count" "${#${(@f)tp}}" "$(( themecount * 2 - 1 ))"
+has "themes preview labels"    "$tp" "catppuccin"
+has "themes preview renders"   "$tp" "[=="
+
+# ---- compact theme (bar width + separators via theme) ---------------------
+cp=$(claude-usage --dir $rl --show-reset=false --theme compact)
+hasnot "compact no brackets" "$cp" "▕"
+has    "compact 5-cell bar"  "$cp" "█░░░░"   # 20% of 5 cells = 1 full
+eq "compact text sep" \
+  "$(claude-usage --dir $rl --text-only --show-reset=false --theme compact)" \
+  "7d 20% Opus 27% 5h 49%"
+# explicit bar width beats the theme
+has "env width beats theme" \
+  "$(CLAUDE_USAGE_BAR_WIDTH=10 claude-usage --dir $rl --show-reset=false --theme compact)" "██░░░░░░░░"
+
 # ---- per-field overrides --------------------------------------------------
 has "threshold override → red" \
   "$(CLAUDE_USAGE_THRESHOLDS='10:15' claude-usage --dir $rl --show-reset=false)" "${esc}[31m"
@@ -276,7 +331,8 @@ fi
 
 # ---- meta flags -----------------------------------------------------------
 eq "version" "$(claude-usage --version)" "claude-usage $CLAUDE_USAGE_VERSION"
-eq "list-themes" "$(claude-usage --list-themes)" "default mono ascii bright neon"
+eq "list-themes" "$(claude-usage --list-themes)" \
+  "default mono ascii bright neon labelled catppuccin compact retro shade dots spark line dracula nord gruvbox"
 
 claude-usage --dir $rl --theme bogus >/dev/null 2>&1
 (( $? == 1 )) && ok "unknown theme → rc 1" || bad "unknown theme → rc 1" "rc=$?"

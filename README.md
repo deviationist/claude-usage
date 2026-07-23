@@ -65,9 +65,10 @@ be *sourced* — it isn't an executable on `PATH`.)
 ```
 claude-usage                          # colour progress bars (default, --pretty)
 claude-usage --text-only              # plain one-liner, no bars/colour
-claude-usage --theme bright           # pick a preset (default/mono/ascii/bright/neon)
+claude-usage --theme labelled         # pick a preset (--list-themes for names)
 claude-usage --no-color               # keep the bars, drop all colour
 claude-usage --list-themes            # print the built-in preset names
+claude-usage --themes                 # preview: render your usage once per theme
 claude-usage --json                   # machine-readable summary for scripts
 claude-usage --raw                    # full untouched endpoint response
 claude-usage --fresh                  # blocking refresh, guaranteed current
@@ -96,8 +97,13 @@ Both `--pretty` and `--text-only` order the metrics with the 5h window last
 
 ## Theming
 
-The `--pretty` bars are themed. Pick a preset with `--theme NAME` (or
-`CLAUDE_USAGE_THEME`); `--list-themes` prints the names.
+A theme is a **full-config preset**: colours and glyphs for the `--pretty`
+bars, plus optional layout defaults — separators, section/reset prefixes, bar
+width — that apply to both output modes. Pick one with `--theme NAME` (or
+`CLAUDE_USAGE_THEME`, including in the config file); `--list-themes` prints
+the names.
+
+Preview them all against your own live usage with `claude-usage --themes`.
 
 | Theme | Look |
 |---|---|
@@ -106,6 +112,22 @@ The `--pretty` bars are themed. Pick a preset with `--theme NAME` (or
 | `ascii` | colour + ASCII glyphs (`[##....]`) — for fonts without block chars |
 | `bright` | bright ANSI colours, unicode bars |
 | `neon` | vivid 256-colour, unicode bars |
+| `retro` | arcade loading bar `[====>.....]` in CRT phosphor (green tube → amber → alarm red) |
+| `shade` | DOS shade blocks `▕▓▓▓▒░░░░░░▏` on ice (cyan → gold → salmon) |
+| `dots` | dot meter, 5 wide, candy pastels: `●●◑○○` (mint → peach → hot pink) |
+| `spark` | sparkline ramp rising from a baseline, electric: `██▅▁▁▁▁▁▁▁` (cyan → orange → hot red) |
+| `line` | slim gauge, understated: `━━━╸───────` (periwinkle → gold → rose) |
+| `labelled` | default look + section/reset labels: `Credit: $0/$40 ▕░░▏0% Reset Aug 1 \| Plan: 7d▕██▏53% Reset 3d20h …` |
+| `catppuccin` | truecolor [Catppuccin Mocha](https://catppuccin.com) — the palette from the screenshot above |
+| `dracula` | truecolor [Dracula](https://draculatheme.com) palette |
+| `nord` | truecolor [Nord](https://nordtheme.com) palette |
+| `gruvbox` | truecolor [Gruvbox](https://github.com/morhetz/gruvbox) palette |
+| `compact` | tightest statusline fit: 5-cell bars, no brackets, single-space separators |
+
+A theme only fills settings you haven't chosen yourself — any explicit value
+(flag, env var, or config file) beats the theme. So `--theme labelled
+--limits-prefix 'Usage: '` keeps the theme's `Credit:` label but swaps `Plan:`
+for `Usage: `.
 
 `--no-color` drops colour from *any* theme while keeping the bars (unlike
 `--text-only`, which drops the bars too).

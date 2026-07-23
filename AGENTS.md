@@ -71,10 +71,17 @@ executed — there is no binary on `PATH`.
   config file > process env. This exists because statusline repaints run in
   subprocesses that don't inherit un-exported shell vars; don't "simplify" it
   away in favour of env-only. The parser needs `extended_glob` (set locally).
-- **Theming** (pretty only): a theme sets colours / thresholds / glyphs /
-  brackets / dim, then per-field `CLAUDE_USAGE_*` env vars override on top, then
-  `--no-color` / `NO_COLOR` blank all SGR. Colours/glyphs are passed into jq as
-  args — do not re-hardcode them in the jq programs.
+- **Theming**: a theme is a full-config preset — colours / thresholds / glyphs /
+  brackets / dim (pretty only) plus optional layout defaults (`tsep` / `tgsep` /
+  `trpfx` / `tsppfx` / `tlimpfx` / `twidth`) that apply to both modes. Layout
+  presets only fill fields with no explicit value — the `*_set` flags record
+  flag/env/config choices and gate the application; preserve that precedence
+  (flags > config > env > theme > built-in default). Per-field `CLAUDE_USAGE_*`
+  overrides layer on top, then `--no-color` / `NO_COLOR` blank all SGR.
+  Colours/glyphs are passed into jq as args — do not re-hardcode them in the
+  jq programs. The canonical theme-name list is the `all_themes` array (feeds
+  `--list-themes`, the `--themes` preview — which recursively renders once per
+  theme — and the unknown-theme error); keep it in sync with the `case` table.
 
 ## Testing
 
