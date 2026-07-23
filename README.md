@@ -4,7 +4,7 @@ Your Claude account's spend / rate-limit usage in the terminal — **straight fr
 Anthropic's own server-side counter**, not from parsing local transcripts.
 
 <p align="center">
-  <img src="assets/demo-v0.4.0-6ff329.svg" alt="claude-usage — coloured usage bars for every plan shape, straight from Anthropic's server-side counter">
+  <img src="assets/demo-v0.4.0-21e37a.svg" alt="claude-usage — coloured usage bars for every plan shape, straight from Anthropic's server-side counter">
 </p>
 
 (The image is genuine renderer output — `tools/generate-readme-svg.zsh` seeds
@@ -112,7 +112,7 @@ the names.
 Preview them all against your own live usage with `claude-usage --themes`:
 
 <p align="center">
-  <img src="assets/themes-v0.4.0-6ff329.svg" alt="all claude-usage themes rendered against the same usage">
+  <img src="assets/themes-v0.4.0-21e37a.svg" alt="all claude-usage themes rendered against the same usage">
 </p>
 
 | Theme | Look |
