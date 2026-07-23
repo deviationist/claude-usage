@@ -1,22 +1,25 @@
 #!/usr/bin/env zsh
 # ---------------------------------------------------------------------------
-# tools/generate-readme-svg.zsh — regenerate the README demo SVG.
+# tools/generate-readme-svg.zsh — regenerate the README demo + themes SVGs.
 #
-# Renders REAL `claude-usage --pretty` output into an SVG terminal window:
-# seeds fake per-account caches (same hermetic trick as test/run.zsh — no
-# network, no credentials), captures the ANSI output, and converts the SGR
-# colour codes into <tspan fill="…"> runs. The image in the README is
-# therefore genuine renderer output, not hand-drawn art.
+# Renders REAL `claude-usage` output into SVG terminal windows: seeds fake
+# per-account caches (same hermetic trick as test/run.zsh — no network, no
+# credentials), captures the ANSI output, and converts the SGR colour codes
+# into <tspan fill="…"> runs (truecolor passthrough + xterm-256 cube math).
+# The images in the README are therefore genuine renderer output, not
+# hand-drawn art.
 #
-# Usage:  zsh tools/generate-readme-svg.zsh            # → assets/demo-v<ver>-<hash>.svg
-#         zsh tools/generate-readme-svg.zsh OUT.svg    # fixed path, README untouched
+# Usage:  zsh tools/generate-readme-svg.zsh
+#           → assets/demo-v<ver>-<hash>.svg + assets/themes-v<ver>-<hash>.svg,
+#             older ones deleted, README <img> references rewritten (the
+#             version+hash filenames bust GitHub's camo image cache — pattern
+#             borrowed from grove's generate-screenshot). Commit all three.
+#         zsh tools/generate-readme-svg.zsh DEMO.svg THEMES.svg
+#           → fixed paths, README untouched (used by the test-suite smoke test)
 #
-# The default run deletes older assets/demo-v*.svg, embeds the version + a
-# random hash in the filename (busts GitHub's camo image cache), and rewrites
-# the README's <img> reference to match — commit both files. Regenerate
-# whenever the default theme or the renderers change. Countdowns ("3d20h")
-# are stable; the derived monthly date ("Aug 1") tracks the month you run it
-# in — fine for a demo. (Pattern borrowed from grove's generate-screenshot.)
+# Regenerate whenever the themes or the renderers change. Countdown values
+# ("3d20h") are stable; the derived monthly date ("Aug 1") tracks the month
+# you run it in — fine for a demo.
 # ---------------------------------------------------------------------------
 emulate -L zsh
 setopt extended_glob
@@ -68,15 +71,43 @@ out_work=$(claude-usage --dir "$tmp/work")
 out_text=$(claude-usage --dir "$tmp/max" --text-only)
 
 # ---- ANSI → SVG ------------------------------------------------------------
-# Catppuccin Mocha (matches grove's README screenshot palette)
+# Catppuccin Mocha chrome (matches grove's README screenshot palette); basic
+# ANSI colours map to their Mocha equivalents, 256/truecolor SGRs convert
+# exactly.
 BG='#1e1e2e'  BAR='#181825'  FG='#cdd6f4'  DIMC='#9399b2'
 DOT1='#f38ba8' DOT2='#f9e2af' DOT3='#a6e3a1'
-typeset -A SGR_FILL=(
-  2 "$DIMC"
-  31 '#f38ba8'  32 '#a6e3a1'  33 '#f9e2af'
-  91 '#f38ba8'  92 '#a6e3a1'  93 '#f9e2af'
-  '38;5;46' '#a6e3a1'  '38;5;226' '#f9e2af'  '38;5;196' '#f38ba8'
-)
+FONT="'Cascadia Code','Fira Code',SFMono-Regular,Consolas,Menlo,monospace"
+integer FS=13 LH=20 TH=30 PX=20 PY=14
+
+# SGR params → hex fill ("" = default FG)
+sgr_fill() {
+  local p=$1
+  case $p in
+    2)      print -rn -- "$DIMC"; return ;;
+    31|91)  print -rn '#f38ba8'; return ;;
+    32|92)  print -rn '#a6e3a1'; return ;;
+    33|93)  print -rn '#f9e2af'; return ;;
+  esac
+  local -a c=(${(s:;:)p})
+  if (( ${#c} == 5 )) && [[ $c[1] == 38 && $c[2] == 2 ]]; then
+    printf '#%02x%02x%02x' $c[3] $c[4] $c[5]; return          # truecolor
+  fi
+  if (( ${#c} == 3 )) && [[ $c[1] == 38 && $c[2] == 5 ]]; then
+    integer n=$c[3] r g b
+    if (( n >= 232 )); then                                    # grayscale ramp
+      (( r = 8 + 10 * (n - 232) )); printf '#%02x%02x%02x' $r $r $r
+    elif (( n >= 16 )); then                                   # 6×6×6 cube
+      integer i=$(( n - 16 ))
+      (( r = i / 36 )); (( g = (i % 36) / 6 )); (( b = i % 6 ))
+      (( r = r ? 55 + 40 * r : 0 ))
+      (( g = g ? 55 + 40 * g : 0 ))
+      (( b = b ? 55 + 40 * b : 0 ))
+      printf '#%02x%02x%02x' $r $g $b
+    fi
+    return
+  fi
+  print -rn ''
+}
 
 xesc() { local s=$1; s=${s//\&/&amp;}; s=${s//</&lt;}; s=${s//>/&gt;}; print -rn -- "$s" }
 
@@ -98,15 +129,55 @@ render_ansi() {
       params=${tail%%m*}
       s=${tail[$(( ${#params} + 2 )),-1]}
       if [[ -z $params || $params == 0 ]]; then fill=""
-      else fill="${SGR_FILL[$params]:-}"; fi
+      else fill=$(sgr_fill "$params"); fi
     fi
   done
   print -rn -- "$out"
 }
 
-# ---- screen content --------------------------------------------------------
-# Each entry: TYPE|content — c=dim comment, p=prompt+command, a=ANSI output, b=blank
-lines=(
+# ---- generic emitter -------------------------------------------------------
+# emit_svg <lines-array-name> <out-file>
+# Each entry: TYPE|content — c=dim comment, p=prompt+command, a=ANSI, b=blank
+emit_svg() {
+  local -a _lines=("${(@P)1}")
+  local out=$2 entry typ body
+  integer maxcols=0 n
+  for entry in "${_lines[@]}"; do
+    typ=${entry%%\|*}; body=${entry#*\|}
+    case $typ in
+      p) n=$(( $(vlen "$body") + 2 )) ;;   # "❯ " prompt prefix
+      *) n=$(vlen "$body") ;;
+    esac
+    (( n > maxcols )) && maxcols=$n
+  done
+  local -F cw=7.85                         # ~monospace advance at 13px
+  integer W=$(( PX * 2 + maxcols * cw + 6 ))
+  integer H=$(( TH + PY + ${#_lines} * LH + PY ))
+  {
+    print -r -- "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"$W\" height=\"$H\" viewBox=\"0 0 $W $H\" role=\"img\" aria-label=\"claude-usage example output\">"
+    print -r -- "  <rect width=\"$W\" height=\"$H\" rx=\"10\" fill=\"$BG\"/>"
+    print -r -- "  <rect width=\"$W\" height=\"$TH\" rx=\"10\" fill=\"$BAR\"/>"
+    print -r -- "  <rect y=\"$(( TH - 6 ))\" width=\"$W\" height=\"6\" fill=\"$BAR\"/>"
+    print -r -- "  <circle cx=\"18\" cy=\"$(( TH / 2 ))\" r=\"5.5\" fill=\"$DOT1\"/><circle cx=\"36\" cy=\"$(( TH / 2 ))\" r=\"5.5\" fill=\"$DOT2\"/><circle cx=\"54\" cy=\"$(( TH / 2 ))\" r=\"5.5\" fill=\"$DOT3\"/>"
+    print -r -- "  <text x=\"$(( W / 2 ))\" y=\"$(( TH / 2 + 5 ))\" text-anchor=\"middle\" font-family=\"$FONT\" font-size=\"12\" fill=\"$DIMC\">claude-usage</text>"
+    integer i=0 y
+    for entry in "${_lines[@]}"; do
+      typ=${entry%%\|*}; body=${entry#*\|}
+      y=$(( TH + PY + i * LH + FS ))
+      case $typ in
+        b) ;;
+        c) print -r -- "  <text x=\"$PX\" y=\"$y\" font-family=\"$FONT\" font-size=\"$FS\" xml:space=\"preserve\" fill=\"$DIMC\">$(xesc "$body")</text>" ;;
+        p) print -r -- "  <text x=\"$PX\" y=\"$y\" font-family=\"$FONT\" font-size=\"$FS\" xml:space=\"preserve\" fill=\"$FG\"><tspan fill=\"$DOT3\">❯</tspan> $(xesc "$body")</text>" ;;
+        a) print -r -- "  <text x=\"$PX\" y=\"$y\" font-family=\"$FONT\" font-size=\"$FS\" xml:space=\"preserve\" fill=\"$FG\">$(render_ansi "$body")</text>" ;;
+      esac
+      (( i++ ))
+    done
+    print -r -- "</svg>"
+  } > "$out"
+}
+
+# ---- demo screen -----------------------------------------------------------
+demo_lines=(
   'c|# Max / Pro seat — plan windows, each with its reset countdown'
   'p|claude-usage'
   "a|$out_max"
@@ -124,60 +195,34 @@ lines=(
   "a|$out_text"
 )
 
-# ---- layout ----------------------------------------------------------------
-FONT="'Cascadia Code','Fira Code',SFMono-Regular,Consolas,Menlo,monospace"
-integer FS=13 LH=20 TH=30 PX=20 PY=14
-integer maxcols=0 n
-local entry typ body
-for entry in "${lines[@]}"; do
-  typ=${entry%%\|*}; body=${entry#*\|}
-  case $typ in
-    p) n=$(( $(vlen "$body") + 2 )) ;;   # "❯ " prompt prefix
-    *) n=$(vlen "$body") ;;
-  esac
-  (( n > maxcols )) && maxcols=$n
+# ---- themes screen ---------------------------------------------------------
+# One line per theme, same data for all: the max seat (34/76/93 — shows each
+# theme's full low/mid/high palette). Name column dimmed via a real SGR so it
+# flows through the same ANSI→SVG path.
+themes_lines=(
+  'c|# every theme, same usage — pick one with --theme NAME or CLAUDE_USAGE_THEME'
+  'p|claude-usage --themes'
+  'b|'
+)
+for _t in $(claude-usage --list-themes); do
+  themes_lines+=( "a|$(printf $'\e[2m%-11s\e[0m ' "$_t")$(claude-usage --dir "$tmp/max" --theme "$_t")" )
 done
-local -F cw=7.85                         # ~monospace advance at 13px
-integer W=$(( PX * 2 + maxcols * cw + 6 ))
-integer H=$(( TH + PY + ${#lines} * LH + PY ))
 
-# ---- emit ------------------------------------------------------------------
-render_svg() {
-  print -r -- "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"$W\" height=\"$H\" viewBox=\"0 0 $W $H\" role=\"img\" aria-label=\"claude-usage example output\">"
-  print -r -- "  <!-- terminal window -->"
-  print -r -- "  <rect width=\"$W\" height=\"$H\" rx=\"10\" fill=\"$BG\"/>"
-  print -r -- "  <rect width=\"$W\" height=\"$TH\" rx=\"10\" fill=\"$BAR\"/>"
-  print -r -- "  <rect y=\"$(( TH - 6 ))\" width=\"$W\" height=\"6\" fill=\"$BAR\"/>"
-  print -r -- "  <circle cx=\"18\" cy=\"$(( TH / 2 ))\" r=\"5.5\" fill=\"$DOT1\"/><circle cx=\"36\" cy=\"$(( TH / 2 ))\" r=\"5.5\" fill=\"$DOT2\"/><circle cx=\"54\" cy=\"$(( TH / 2 ))\" r=\"5.5\" fill=\"$DOT3\"/>"
-  print -r -- "  <text x=\"$(( W / 2 ))\" y=\"$(( TH / 2 + 5 ))\" text-anchor=\"middle\" font-family=\"$FONT\" font-size=\"12\" fill=\"$DIMC\">claude-usage</text>"
-  integer i=0 y
-  for entry in "${lines[@]}"; do
-    typ=${entry%%\|*}; body=${entry#*\|}
-    y=$(( TH + PY + i * LH + FS ))
-    case $typ in
-      b) ;;
-      c) print -r -- "  <text x=\"$PX\" y=\"$y\" font-family=\"$FONT\" font-size=\"$FS\" xml:space=\"preserve\" fill=\"$DIMC\">$(xesc "$body")</text>" ;;
-      p) print -r -- "  <text x=\"$PX\" y=\"$y\" font-family=\"$FONT\" font-size=\"$FS\" xml:space=\"preserve\" fill=\"$FG\"><tspan fill=\"$DOT3\">❯</tspan> $(xesc "$body")</text>" ;;
-      a) print -r -- "  <text x=\"$PX\" y=\"$y\" font-family=\"$FONT\" font-size=\"$FS\" xml:space=\"preserve\" fill=\"$FG\">$(render_ansi "$body")</text>" ;;
-    esac
-    (( i++ ))
-  done
-  print -r -- "</svg>"
-}
-
+# ---- write -----------------------------------------------------------------
 if [[ -n ${1:-} ]]; then
-  render_svg > "$1"
-  print "wrote $1 (${W}x${H})"
+  emit_svg demo_lines "$1"
+  print "wrote $1"
+  if [[ -n ${2:-} ]]; then emit_svg themes_lines "$2"; print "wrote $2"; fi
 else
-  # Versioned, hash-stamped filename → busts GitHub's camo image cache; keep
-  # the README's <img> reference in sync (grove's screenshot pattern).
   mkdir -p "$root/assets"
   local old
-  for old in "$root"/assets/demo-v*.svg(N); do rm -f "$old"; done
+  for old in "$root"/assets/demo-v*.svg(N) "$root"/assets/themes-v*.svg(N); do rm -f "$old"; done
   local hash; hash=$(xxd -l3 -p /dev/urandom)
-  local fname="demo-v${CLAUDE_USAGE_VERSION}-${hash}.svg"
-  render_svg > "$root/assets/$fname"
-  sed -i.bak "s|assets/demo-v[^)\"]*\.svg|assets/$fname|" "$root/README.md" \
-    && rm -f "$root/README.md.bak"
-  print "wrote assets/$fname (${W}x${H}) and updated README.md"
+  emit_svg demo_lines   "$root/assets/demo-v${CLAUDE_USAGE_VERSION}-${hash}.svg"
+  emit_svg themes_lines "$root/assets/themes-v${CLAUDE_USAGE_VERSION}-${hash}.svg"
+  sed -i.bak \
+    -e "s|assets/demo-v[^)\"]*\.svg|assets/demo-v${CLAUDE_USAGE_VERSION}-${hash}.svg|" \
+    -e "s|assets/themes-v[^)\"]*\.svg|assets/themes-v${CLAUDE_USAGE_VERSION}-${hash}.svg|" \
+    "$root/README.md" && rm -f "$root/README.md.bak"
+  print "wrote assets/{demo,themes}-v${CLAUDE_USAGE_VERSION}-${hash}.svg and updated README.md"
 fi

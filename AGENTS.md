@@ -16,8 +16,8 @@ executed — there is no binary on `PATH`.
 |---|---|
 | `claude-usage.zsh` | The entire implementation. Everything lives here. |
 | `test/run.zsh` | Hermetic test harness (no network). |
-| `tools/generate-readme-svg.zsh` | Regenerates the README demo SVG from real renderer output. |
-| `assets/demo-v*.svg` | The README terminal screenshot — **generated, never hand-edit**. |
+| `tools/generate-readme-svg.zsh` | Regenerates the README demo + themes SVGs from real renderer output. |
+| `assets/{demo,themes}-v*.svg` | The README terminal screenshots — **generated, never hand-edit**. |
 | `.github/workflows/ci.yml` | Runs `zsh -n` + `test/run.zsh` on push/PR. |
 | `README.md` | Human docs. |
 | `AGENTS.md` | This file. |
@@ -102,9 +102,10 @@ for any renderer or flag change**, and keep the suite network-free.
 - `claude-usage` runs under `emulate -L zsh`; keep it POSIX-ish zsh, no external
   deps beyond `zsh` / `jq` / `curl`.
 - Bump `CLAUDE_USAGE_VERSION` (top of `claude-usage.zsh`) on a release and tag it.
-- After changing the default theme or the pretty renderer, regenerate the README
-  demo SVG (`zsh tools/generate-readme-svg.zsh`) — it renders real output, embeds
-  version+hash in the filename (busts GitHub's image cache), and rewrites the
-  README `<img>` reference; commit the new SVG and the README together.
+- After changing any theme or the pretty renderer, regenerate the README demo +
+  themes SVGs (`zsh tools/generate-readme-svg.zsh`) — it renders real output,
+  embeds version+hash in the filenames (busts GitHub's image cache), and
+  rewrites the README `<img>` references; commit the new SVGs and the README
+  together.
 - Default `--pretty` output is a public contract (the claude-statusline project
   parses/renders it) — changing default colours/glyphs is a breaking change.

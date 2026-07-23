@@ -4,7 +4,7 @@ Your Claude account's spend / rate-limit usage in the terminal — **straight fr
 Anthropic's own server-side counter**, not from parsing local transcripts.
 
 <p align="center">
-  <img src="assets/demo-v0.3.0-6f93be.svg" alt="claude-usage — coloured usage bars for every plan shape, straight from Anthropic's server-side counter">
+  <img src="assets/demo-v0.4.0-add053.svg" alt="claude-usage — coloured usage bars for every plan shape, straight from Anthropic's server-side counter">
 </p>
 
 (The image is genuine renderer output — `tools/generate-readme-svg.zsh` seeds
@@ -103,7 +103,11 @@ width — that apply to both output modes. Pick one with `--theme NAME` (or
 `CLAUDE_USAGE_THEME`, including in the config file); `--list-themes` prints
 the names.
 
-Preview them all against your own live usage with `claude-usage --themes`.
+Preview them all against your own live usage with `claude-usage --themes`:
+
+<p align="center">
+  <img src="assets/themes-v0.4.0-add053.svg" alt="all claude-usage themes rendered against the same usage">
+</p>
 
 | Theme | Look |
 |---|---|
@@ -228,13 +232,13 @@ process env.
 ```sh
 zsh -n claude-usage.zsh              # syntax check
 zsh test/run.zsh                     # test suite (hermetic — no network)
-zsh tools/generate-readme-svg.zsh    # regenerate the README demo SVG
+zsh tools/generate-readme-svg.zsh    # regenerate the README demo + themes SVGs
 ```
 
-The demo SVG is genuine renderer output (seeded caches, ANSI → SVG). The
-generator embeds the version + a random hash in the filename and rewrites the
-README's `<img>` reference — commit both. Regenerate whenever the default
-theme or the renderers change.
+The SVGs are genuine renderer output (seeded caches, ANSI → SVG, truecolor
+passthrough + xterm-256 cube math). The generator embeds the version + a
+random hash in the filenames and rewrites the README's `<img>` references —
+commit all three. Regenerate whenever the themes or the renderers change.
 
 The tests seed a fresh cache for a throwaway account dir and assert against the
 rendered output, so they never touch the network or your real credentials. CI
