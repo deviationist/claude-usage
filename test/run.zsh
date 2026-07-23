@@ -321,8 +321,8 @@ claude-usage --dir $combo --json | jq -e '.spend.limit==40 and .spend.balance==1
 svg="$tmp/demo-test.svg"; tsvg="$tmp/themes-test.svg"
 zsh "$root/tools/generate-readme-svg.zsh" "$svg" "$tsvg" >/dev/null 2>&1
 if [[ -s $svg ]] && grep -q '</svg>' "$svg" \
-   && grep -q '<tspan fill="#0dbc79">' "$svg" \
-   && grep -q '<tspan fill="#cd3131">' "$svg" \
+   && grep -q '<tspan fill="#00c200">' "$svg" \
+   && grep -q '<tspan fill="#b43c2a">' "$svg" \
    && ! grep -q $'\e' "$svg"; then
   ok "svg generator (demo)"
 else

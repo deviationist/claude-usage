@@ -75,9 +75,10 @@ out_text=$(claude-usage --dir "$tmp/max" --text-only)
 # ---- ANSI → SVG ------------------------------------------------------------
 # Catppuccin Mocha chrome (matches grove's README screenshot palette).
 # Basic ANSI colours are terminal-dependent, so the SVG has to pick a
-# rendition: we use the VS Code terminal palette — vivid and ubiquitous, so
-# the "default" theme in the image matches what most real terminals show —
-# with normal vs bright kept DISTINCT. 256/truecolor SGRs convert exactly.
+# rendition: we use the iTerm2 "Default" profile palette (extracted from a
+# real install) — pure vivid green/yellow/red, normal vs bright DISTINCT —
+# so the "default" theme in the image matches what the tool actually looks
+# like in a common real terminal. 256/truecolor SGRs convert exactly.
 BG='#1e1e2e'  BAR='#181825'  FG='#cdd6f4'  DIMC='#9399b2'
 DOT1='#f38ba8' DOT2='#f9e2af' DOT3='#a6e3a1'
 FONT="'Cascadia Code','Fira Code',SFMono-Regular,Consolas,Menlo,monospace"
@@ -88,12 +89,12 @@ sgr_fill() {
   local p=$1
   case $p in
     2)   print -rn -- "$DIMC"; return ;;
-    31)  print -rn '#cd3131'; return ;;   # VS Code red
-    32)  print -rn '#0dbc79'; return ;;   # VS Code green
-    33)  print -rn '#e5e510'; return ;;   # VS Code yellow
-    91)  print -rn '#f14c4c'; return ;;   # VS Code bright red
-    92)  print -rn '#23d18b'; return ;;   # VS Code bright green
-    93)  print -rn '#f5f543'; return ;;   # VS Code bright yellow
+    31)  print -rn '#b43c2a'; return ;;   # iTerm2 Default red
+    32)  print -rn '#00c200'; return ;;   # iTerm2 Default green
+    33)  print -rn '#c7c400'; return ;;   # iTerm2 Default yellow
+    91)  print -rn '#dd7975'; return ;;   # iTerm2 Default bright red
+    92)  print -rn '#58e790'; return ;;   # iTerm2 Default bright green
+    93)  print -rn '#ece100'; return ;;   # iTerm2 Default bright yellow
   esac
   local -a c=(${(s:;:)p})
   if (( ${#c} == 5 )) && [[ $c[1] == 38 && $c[2] == 2 ]]; then
