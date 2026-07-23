@@ -55,9 +55,11 @@ seed max '{"limits":[
   {"kind":"weekly_all","percent":34,"severity":"normal","resets_at":"'$wk'"},
   {"kind":"weekly_scoped","percent":76,"severity":"normal","resets_at":"'$wk'","scope":{"model":{"display_name":"Opus"}}},
   {"kind":"session","percent":93,"severity":"normal","resets_at":"'$ss'"}]}'
+# NOTE: no "balance" in this fixture on purpose — the live API returns
+# spend.balance: null (2026-07), so the screenshot shows only what a real
+# account renders today. Re-add to showcase the bal segment once populated.
 seed combo '{"spend":{"enabled":true,"used":{"amount_minor":1250,"exponent":2},
-  "limit":{"amount_minor":4000,"exponent":2},"percent":31,
-  "balance":{"amount_minor":10000,"exponent":2}},
+  "limit":{"amount_minor":4000,"exponent":2},"percent":31},
  "limits":[
   {"kind":"weekly_all","percent":53,"severity":"normal","resets_at":"'$wk'"},
   {"kind":"weekly_scoped","percent":72,"severity":"normal","resets_at":"'$wk'","scope":{"model":{"display_name":"Fable"}}},
@@ -136,11 +138,12 @@ render_ansi() {
 }
 
 # ---- generic emitter -------------------------------------------------------
-# emit_svg <lines-array-name> <out-file>
+# emit_svg <lines-array-name> <out-file> [line-height-px]
 # Each entry: TYPE|content — c=dim comment, p=prompt+command, a=ANSI, b=blank
 emit_svg() {
   local -a _lines=("${(@P)1}")
   local out=$2 entry typ body
+  integer lh=${3:-$LH}
   integer maxcols=0 n
   for entry in "${_lines[@]}"; do
     typ=${entry%%\|*}; body=${entry#*\|}
@@ -152,7 +155,7 @@ emit_svg() {
   done
   local -F cw=7.85                         # ~monospace advance at 13px
   integer W=$(( PX * 2 + maxcols * cw + 6 ))
-  integer H=$(( TH + PY + ${#_lines} * LH + PY ))
+  integer H=$(( TH + PY + ${#_lines} * lh + PY ))
   {
     print -r -- "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"$W\" height=\"$H\" viewBox=\"0 0 $W $H\" role=\"img\" aria-label=\"claude-usage example output\">"
     print -r -- "  <rect width=\"$W\" height=\"$H\" rx=\"10\" fill=\"$BG\"/>"
@@ -163,7 +166,7 @@ emit_svg() {
     integer i=0 y
     for entry in "${_lines[@]}"; do
       typ=${entry%%\|*}; body=${entry#*\|}
-      y=$(( TH + PY + i * LH + FS ))
+      y=$(( TH + PY + i * lh + FS ))
       case $typ in
         b) ;;
         c) print -r -- "  <text x=\"$PX\" y=\"$y\" font-family=\"$FONT\" font-size=\"$FS\" xml:space=\"preserve\" fill=\"$DIMC\">$(xesc "$body")</text>" ;;
@@ -209,17 +212,19 @@ for _t in $(claude-usage --list-themes); do
 done
 
 # ---- write -----------------------------------------------------------------
+# Themes gallery gets a roomier line height so the examples breathe
+integer THEMES_LH=28
 if [[ -n ${1:-} ]]; then
   emit_svg demo_lines "$1"
   print "wrote $1"
-  if [[ -n ${2:-} ]]; then emit_svg themes_lines "$2"; print "wrote $2"; fi
+  if [[ -n ${2:-} ]]; then emit_svg themes_lines "$2" $THEMES_LH; print "wrote $2"; fi
 else
   mkdir -p "$root/assets"
   local old
   for old in "$root"/assets/demo-v*.svg(N) "$root"/assets/themes-v*.svg(N); do rm -f "$old"; done
   local hash; hash=$(xxd -l3 -p /dev/urandom)
   emit_svg demo_lines   "$root/assets/demo-v${CLAUDE_USAGE_VERSION}-${hash}.svg"
-  emit_svg themes_lines "$root/assets/themes-v${CLAUDE_USAGE_VERSION}-${hash}.svg"
+  emit_svg themes_lines "$root/assets/themes-v${CLAUDE_USAGE_VERSION}-${hash}.svg" $THEMES_LH
   sed -i.bak \
     -e "s|assets/demo-v[^)\"]*\.svg|assets/demo-v${CLAUDE_USAGE_VERSION}-${hash}.svg|" \
     -e "s|assets/themes-v[^)\"]*\.svg|assets/themes-v${CLAUDE_USAGE_VERSION}-${hash}.svg|" \

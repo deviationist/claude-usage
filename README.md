@@ -4,7 +4,7 @@ Your Claude account's spend / rate-limit usage in the terminal — **straight fr
 Anthropic's own server-side counter**, not from parsing local transcripts.
 
 <p align="center">
-  <img src="assets/demo-v0.4.0-add053.svg" alt="claude-usage — coloured usage bars for every plan shape, straight from Anthropic's server-side counter">
+  <img src="assets/demo-v0.4.0-6ff329.svg" alt="claude-usage — coloured usage bars for every plan shape, straight from Anthropic's server-side counter">
 </p>
 
 (The image is genuine renderer output — `tools/generate-readme-svg.zsh` seeds
@@ -30,12 +30,18 @@ plan shapes:
   group again.
 
 Each piece is individually configurable: `--show-spend=false` hides the
-monthly cap (`$0/$40`), `--show-balance=false` hides the purchased-credit
-balance (`bal $100` — rendered whenever the API reports `spend.balance`; the
-field is null server-side so far), `--show-spend-reset=false` drops the
-monthly cap's reset date (`Aug 1` — derived locally as the 1st of next month,
-since the API doesn't report it), and `--show-limit-resets=false` drops the
-per-window countdowns on the 7d/model limits.
+monthly cap (`$0/$40`), `--show-spend-reset=false` drops the monthly cap's
+reset date (`Aug 1` — derived locally as the 1st of next month, since the API
+doesn't report it), and `--show-limit-resets=false` drops the per-window
+countdowns on the 7d/model limits.
+
+> **Your total credit balance can't be shown.** The usage API reports the
+> *monthly* credit spend (`$12.50/$40`) but not the purchased-credit total —
+> `spend.balance` is null server-side, and even claude.ai's own usage page
+> fetches the balance from a separate session-authenticated billing endpoint
+> that an OAuth token can't reach. The rendering is already wired (a dimmed
+> `bal $100` segment, `--show-balance` to toggle): it appears automatically
+> the day Anthropic populates the field.
 
 It's built to be embedded in an always-on statusline: bare calls **never block**
 — they return instantly from a cache and revalidate in a detached background
@@ -106,7 +112,7 @@ the names.
 Preview them all against your own live usage with `claude-usage --themes`:
 
 <p align="center">
-  <img src="assets/themes-v0.4.0-add053.svg" alt="all claude-usage themes rendered against the same usage">
+  <img src="assets/themes-v0.4.0-6ff329.svg" alt="all claude-usage themes rendered against the same usage">
 </p>
 
 | Theme | Look |
@@ -224,6 +230,10 @@ process env.
 - The usage endpoint (`api.anthropic.com/api/oauth/usage`) is **undocumented**
   and was reverse-engineered from Claude Code's own traffic. It may change or
   disappear without notice.
+- **No total credit balance**: the endpoint reports monthly credit spend but
+  returns `spend.balance: null`, so the purchased-credit total shown on
+  claude.ai's usage page is not available here (see the note under the plan
+  shapes above).
 - Keep the TTL sane — hammering the endpoint gets rate-limited. The defaults are
   tuned for a statusline that repaints often.
 
