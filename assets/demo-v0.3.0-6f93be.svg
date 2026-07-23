@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1003" height="358" viewBox="0 0 1003 358" role="img" aria-label="claude-usage example output">
+  <!-- terminal window -->
+  <rect width="1003" height="358" rx="10" fill="#1e1e2e"/>
+  <rect width="1003" height="30" rx="10" fill="#181825"/>
+  <rect y="24" width="1003" height="6" fill="#181825"/>
+  <circle cx="18" cy="15" r="5.5" fill="#f38ba8"/><circle cx="36" cy="15" r="5.5" fill="#f9e2af"/><circle cx="54" cy="15" r="5.5" fill="#a6e3a1"/>
+  <text x="501" y="20" text-anchor="middle" font-family="'Cascadia Code','Fira Code',SFMono-Regular,Consolas,Menlo,monospace" font-size="12" fill="#9399b2">claude-usage</text>
+  <text x="20" y="57" font-family="'Cascadia Code','Fira Code',SFMono-Regular,Consolas,Menlo,monospace" font-size="13" xml:space="preserve" fill="#9399b2"># Max / Pro seat — plan windows, each with its reset countdown</text>
+  <text x="20" y="77" font-family="'Cascadia Code','Fira Code',SFMono-Regular,Consolas,Menlo,monospace" font-size="13" xml:space="preserve" fill="#cdd6f4"><tspan fill="#a6e3a1">❯</tspan> claude-usage</text>
+  <text x="20" y="97" font-family="'Cascadia Code','Fira Code',SFMono-Regular,Consolas,Menlo,monospace" font-size="13" xml:space="preserve" fill="#cdd6f4"><tspan fill="#a6e3a1">7d▕███▍░░░░░░▏34%</tspan> <tspan fill="#9399b2">3d20h</tspan><tspan fill="#9399b2"> · </tspan><tspan fill="#f9e2af">Opus▕███████▌░░▏76%</tspan> <tspan fill="#9399b2">3d20h</tspan><tspan fill="#9399b2"> · </tspan><tspan fill="#f38ba8">5h▕█████████▎▏93%</tspan> <tspan fill="#9399b2">4h5m</tspan></text>
+  <text x="20" y="137" font-family="'Cascadia Code','Fira Code',SFMono-Regular,Consolas,Menlo,monospace" font-size="13" xml:space="preserve" fill="#9399b2"># Max + usage credits — credit group first, then the plan limits</text>
+  <text x="20" y="157" font-family="'Cascadia Code','Fira Code',SFMono-Regular,Consolas,Menlo,monospace" font-size="13" xml:space="preserve" fill="#cdd6f4"><tspan fill="#a6e3a1">❯</tspan> claude-usage</text>
+  <text x="20" y="177" font-family="'Cascadia Code','Fira Code',SFMono-Regular,Consolas,Menlo,monospace" font-size="13" xml:space="preserve" fill="#cdd6f4"><tspan fill="#a6e3a1">$12.5/$40 ▕███░░░░░░░▏31%</tspan> <tspan fill="#9399b2">Aug 1</tspan><tspan fill="#9399b2"> · </tspan><tspan fill="#9399b2">bal $100</tspan><tspan fill="#9399b2"> | </tspan><tspan fill="#a6e3a1">7d▕█████▎░░░░▏53%</tspan> <tspan fill="#9399b2">3d20h</tspan><tspan fill="#9399b2"> · </tspan><tspan fill="#f9e2af">Fable▕███████▏░░▏72%</tspan> <tspan fill="#9399b2">3d20h</tspan><tspan fill="#9399b2"> · </tspan><tspan fill="#a6e3a1">5h▕█▊░░░░░░░░▏18%</tspan> <tspan fill="#9399b2">4h5m</tspan></text>
+  <text x="20" y="217" font-family="'Cascadia Code','Fira Code',SFMono-Regular,Consolas,Menlo,monospace" font-size="13" xml:space="preserve" fill="#9399b2"># USD-budget seat</text>
+  <text x="20" y="237" font-family="'Cascadia Code','Fira Code',SFMono-Regular,Consolas,Menlo,monospace" font-size="13" xml:space="preserve" fill="#cdd6f4"><tspan fill="#a6e3a1">❯</tspan> claude-usage --dir ~/.claude-work</text>
+  <text x="20" y="257" font-family="'Cascadia Code','Fira Code',SFMono-Regular,Consolas,Menlo,monospace" font-size="13" xml:space="preserve" fill="#cdd6f4"><tspan fill="#a6e3a1">$142.5/$300 ▕████▊░░░░░▏48%</tspan> <tspan fill="#9399b2">Aug 1</tspan></text>
+  <text x="20" y="297" font-family="'Cascadia Code','Fira Code',SFMono-Regular,Consolas,Menlo,monospace" font-size="13" xml:space="preserve" fill="#9399b2"># plain one-liner for scripts / statuslines</text>
+  <text x="20" y="317" font-family="'Cascadia Code','Fira Code',SFMono-Regular,Consolas,Menlo,monospace" font-size="13" xml:space="preserve" fill="#cdd6f4"><tspan fill="#a6e3a1">❯</tspan> claude-usage --text-only</text>
+  <text x="20" y="337" font-family="'Cascadia Code','Fira Code',SFMono-Regular,Consolas,Menlo,monospace" font-size="13" xml:space="preserve" fill="#cdd6f4">7d 34% 3d20h | Opus 76% 3d20h | 5h 93% 4h5m</text>
+</svg>
