@@ -112,8 +112,10 @@
 #           same --reset-prefix label (default none); --sep / CLAUDE_USAGE_SEP
 #           overrides the delimiter for both modes.
 #
-# Caching:  stale-while-revalidate, PER ACCOUNT (cache file is derived from the
-#           config dir, so multiple accounts never clobber each other). Bare
+# Caching:  stale-while-revalidate, PER ACCOUNT (cache file is keyed by the
+#           config dir AND the account's accountUuid from .claude.json, so a
+#           serial subscription swap in the same dir — or distinct dirs — never
+#           clobber each other, and a swap doesn't serve the old account). Bare
 #           invocations always return immediately from cache; if older than
 #           $ttl (default 120s, override via CLAUDE_USAGE_TTL), a detached
 #           background refresh runs and the NEXT call sees the new value.
@@ -147,7 +149,23 @@ zmodload -F zsh/stat b:zstat 2>/dev/null
 # ----------------------------------------------------------------------------
 _claude_usage_cache_path() {
   local dir="${1%/}"
-  print -r -- "${TMPDIR:-/tmp}/claude-oauth-usage.${dir:t}.json"
+  # Key by the account identity, not just the dir: a serial subscription swap
+  # (e.g. claude-profile) changes .claude.json's oauthAccount.accountUuid while
+  # keeping the SAME dir, so a dir-only cache would serve the previous account's
+  # numbers until its TTL lapsed. accountUuid changes on every swap; reading it
+  # is ~one small jq. Absent (no login yet) → falls back to the dir-only name,
+  # so behavior is unchanged for the single-account case.
+  local ddir="${dir/#\~/$HOME}" cj acct suffix=""
+  # Claude Code keeps the DEFAULT dir's main config at $HOME/.claude.json; a
+  # custom config dir keeps it at <dir>/.claude.json.
+  if [[ "$ddir" == "$HOME/.claude" ]]; then
+    cj="$HOME/.claude.json"
+  else
+    cj="$ddir/.claude.json"
+  fi
+  acct=$(jq -r '.oauthAccount.accountUuid // empty' "$cj" 2>/dev/null)
+  [[ -n "$acct" ]] && suffix=".${acct:0:8}"
+  print -r -- "${TMPDIR:-/tmp}/claude-oauth-usage.${dir:t}${suffix}.json"
 }
 
 # ----------------------------------------------------------------------------
