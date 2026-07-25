@@ -58,9 +58,16 @@ COMBO='{"spend":{"enabled":true,"used":{"amount_minor":0,"exponent":2},
   {"kind":"weekly_all","percent":20,"severity":"normal"},
   {"kind":"weekly_scoped","percent":27,"severity":"normal","scope":{"model":{"display_name":"Opus"}}},
   {"kind":"session","percent":49,"severity":"normal"}]}'
-# Same, but the credits toggle is off → dollar segment must disappear
+# Toggle off AND $0 spent → dormant cap, dollar segment must disappear
 COMBO_OFF='{"spend":{"enabled":false,"used":{"amount_minor":0,"exponent":2},
   "limit":{"amount_minor":4000,"exponent":2},"percent":0},
+ "limits":[
+  {"kind":"weekly_all","percent":20,"severity":"normal"},
+  {"kind":"session","percent":49,"severity":"normal"}]}'
+# Toggle off BUT real spend accrued ($27.36 against a $40 cap) → still surfaced:
+# a disabled cap with usage is worth showing, unlike a dormant $0 one.
+COMBO_OFF_USED='{"spend":{"enabled":false,"used":{"amount_minor":2736,"exponent":2},
+  "limit":{"amount_minor":4000,"exponent":2},"percent":68},
  "limits":[
   {"kind":"weekly_all","percent":20,"severity":"normal"},
   {"kind":"session","percent":49,"severity":"normal"}]}'
@@ -69,6 +76,7 @@ rl=$(seed ratelimit "$RL")
 usd=$(seed usd "$USD")
 combo=$(seed combo "$COMBO")
 combooff=$(seed combooff "$COMBO_OFF")
+combooffused=$(seed combooffused "$COMBO_OFF_USED")
 
 # ---- text mode (deterministic with --show-reset=false) --------------------
 eq "text rate-limit" \
@@ -89,9 +97,13 @@ eq "text USD cap, spend-reset off" \
 eq "text combined (Max + credits)" \
   "$(claude-usage --dir $combo --text-only --show-reset=false)" \
   "\$0 / \$40 (0%, $nextmonth) | bal \$100 || 7d 20% | Opus 27% | 5h 49%"
-eq "text combined, credits toggled off" \
+eq 'text combined, dormant cap ($0, toggle off) hidden' \
   "$(claude-usage --dir $combooff --text-only --show-reset=false)" \
   "7d 20% | 5h 49%"
+# Toggle off but real spend accrued → the dollar segment IS surfaced.
+eq "text disabled cap with usage still shows" \
+  "$(claude-usage --dir $combooffused --text-only --show-reset=false --show-spend-reset=false)" \
+  "\$27.36 / \$40 (68%) || 7d 20% | 5h 49%"
 eq "text --show-spend=false" \
   "$(claude-usage --dir $combo --text-only --show-reset=false --show-spend=false)" \
   "bal \$100 || 7d 20% | Opus 27% | 5h 49%"
@@ -394,6 +406,15 @@ has "single-account table label" "$sout" "solo"
 has "single-account table 7D"    "$sout" "7D"
 has "single-account table 5h"    "$sout" "49%"
 
+# Themed progress bars in cells (on by default), theme-aware glyphs, and the
+# --no-bars / CLAUDE_USAGE_TABLE_BARS escape hatch back to a bare numeric grid.
+has    "table bars by default"    "$sout" "▕"
+has    "table bar full glyph"     "$sout" "█"
+has    "table ascii theme bar"    "$(claude-usage --dir "$sdir" --table --no-borders --theme ascii)" "["
+hasnot "table --no-bars drops bar" "$(claude-usage --dir "$sdir" --table --no-borders --no-bars --no-color)" "▕"
+hasnot "table env TABLE_BARS=false" "$(CLAUDE_USAGE_TABLE_BARS=false claude-usage --dir "$sdir" --table --no-borders --no-color)" "▕"
+has    "table --no-bars keeps pct" "$(claude-usage --dir "$sdir" --table --no-borders --no-bars --no-color)" "49%"
+
 # Per-cell resets mirror the theme: shown with --reset-prefix, gone when the
 # matching toggle is off (7d reset present here, none on 5h).
 claude-profile() {
@@ -411,6 +432,20 @@ claude-profile() {
   printf '%s\t%s\n' "b" "$RLC"
 }
 hasnot "table omits SPEND when none have it" "$(claude-usage --all --table --no-borders --no-color)" "SPEND"
+unfunction claude-profile
+
+# The table honours spend_on just like pretty mode: a live cap (enabled=true) or
+# a disabled cap that carries real spend shows the SPEND column; only a dormant
+# ($0, toggle off) cap suppresses it — so `--table` and the default line agree.
+has    "table shows live cap"           "$(claude-usage --dir $combo --table --no-borders --no-color)"        '$0/$40'
+has    "table shows disabled+used cap"  "$(claude-usage --dir $combooffused --table --no-borders --no-color)" '$27.36/$40'
+hasnot "table hides dormant cap"        "$(claude-usage --dir $combooff --table --no-borders --no-color)"     "SPEND"
+# --all table with only a dormant disabled-cap account: no SPEND column at all.
+claude-profile() {
+  [[ "$1" == "usage-json" ]] || return 0
+  printf '%s\t%s\n' "off" "$COMBO_OFF"
+}
+hasnot "all table hides dormant cap" "$(claude-usage --all --table --no-borders --no-color)" "SPEND"
 unfunction claude-profile
 
 # ---- README SVG generator (smoke; explicit output paths → README untouched) -

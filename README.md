@@ -197,22 +197,26 @@ named columns instead:
 
 ```console
 $ claude-usage --all --table
-┌─────────┬───────────────────┬───────────┬────────────┬───────────┐
-│ ACCOUNT │ SPEND             │ 7D        │ FABLE      │ 5H        │
-├─────────┼───────────────────┼───────────┼────────────┼───────────┤
-│ max20x  │ $99.66/$100 Aug 1 │ 80% 1d16h │ 100% 1d16h │ 2% 4h48m  │
-│ max5x   │ ·                 │ 11% 6d12h │ 5% 6d12h   │ 87% 2h28m │
-└─────────┴───────────────────┴───────────┴────────────┴───────────┘
+┌─────────┬───────────────────────────────┬────────────────────────┬─────────────────────────┬────────────────────────┐
+│ ACCOUNT │ SPEND                         │ 7D                     │ FABLE                   │ 5H                     │
+├─────────┼───────────────────────────────┼────────────────────────┼─────────────────────────┼────────────────────────┤
+│ max20x  │ ▕██████████▏ $99.66/$100 Aug 1│ ▕████████░░▏ 80% 1d16h  │ ▕██████████▏ 100% 1d16h │ ▕░░░░░░░░░░▏ 2% 4h48m   │
+│ max5x   │ ·                             │ ▕█░░░░░░░░░▏ 11% 6d12h  │ ▕░░░░░░░░░░▏ 5% 6d12h    │ ▕████████▋░▏ 87% 2h28m  │
+└─────────┴───────────────────────────────┴────────────────────────┴─────────────────────────┴────────────────────────┘
 ```
 
 `--table` is a **format**, not an account selector: on its own it renders just
 the current account (one row); combine it with `--all` for every account.
 Columns are the **union** across accounts (`ACCOUNT`, then `SPEND` only if some
-account has a cap, `7D`, one per scoped model, `5H`); a metric an account lacks
-shows a dim `·`. Each cell is a percent **plus its own reset countdown**, tinted
-by the same thresholds as the bars and honouring the same reset toggles
-(`--show-limit-resets`, `--show-reset`, `--reset-prefix`, `--no-color`). Borders
-are on by default — drop them with **`--no-borders`**.
+account has a cap that's **live** (usage credits enabled) **or carries real
+spend** — the same `spend_on` gate as pretty mode, so a disabled *but used* cap
+still shows while a dormant $0 one is hidden — `7D`, one per scoped model, `5H`);
+a metric an account lacks shows a dim `·`. Each cell carries a **themed progress bar** (same glyphs,
+brackets, colours and `CLAUDE_USAGE_BAR_WIDTH` as the statusline bars) followed
+by the percent **plus its own reset countdown**, honouring the same reset
+toggles (`--show-limit-resets`, `--show-reset`, `--reset-prefix`, `--no-color`).
+Borders are on by default — drop them with **`--no-borders`**; drop the bars for
+a bare numeric grid with **`--no-bars`** (or `CLAUDE_USAGE_TABLE_BARS=false`).
 
 Division of labour: `claude-profile` owns the credentials and hands back each
 account's usage (**refreshing a parked account's token** when needed, which a
