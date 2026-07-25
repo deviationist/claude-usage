@@ -107,11 +107,18 @@ only when the user asks for it and `claude-profile` is installed.
   the config-dir basename); `--all --table` renders every account. Fixes the
   raggedness of the free-form lines (a `$`-cap segment on one account shifts
   everything). Columns = the *union* across accounts (`ACCOUNT`, optional
-  `SPEND`, `7D`, one per scoped model, `5H`); a metric an account lacks is a dim
-  `·`. Each cell is a **percent + its own reset countdown** (dimmed,
-  `--reset-prefix` label), mirroring the bars and gated by the same
-  `--show-limit-resets` / `--show-reset` / `--show-spend-reset` toggles. **Box
-  borders by default; `--no-borders` drops them.** Both `--table` and
+  `SPEND` — only for accounts whose cap is **live** (`spend.enabled==true`) OR
+  **carries real spend** (`spend.spent>0`) in the `--json` summary, the same
+  `spend_on` gate pretty mode applies (a disabled-but-used cap still shows; only
+  a dormant $0 one is hidden), so both renderers agree — `7D`, one per scoped
+  model, `5H`); a metric an account lacks is a dim `·`. Each cell is a **themed progress bar + percent + its own reset countdown**
+  (dimmed, `--reset-prefix` label), the bar reusing the resolved theme glyphs /
+  brackets / colour and `CLAUDE_USAGE_BAR_WIDTH` via a `mkbar` copied from the
+  pretty renderer (each glyph is one display column, so the bar length feeds the
+  plain-width padding unchanged). Gated by the same `--show-limit-resets` /
+  `--show-reset` / `--show-spend-reset` toggles. **Bars on by default;
+  `--no-bars` (or `CLAUDE_USAGE_TABLE_BARS=false`) falls back to the bare numeric
+  grid.** **Box borders by default; `--no-borders` drops them.** Both `--table` and
   `--all --table` share `_claude_usage_render_table` (a jq program reading
   {account, usage-summary} NDJSON on stdin; it reads the caller's resolved theme
   + toggle locals via zsh **dynamic scope**, so nothing is threaded as args).

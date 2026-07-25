@@ -52,15 +52,20 @@
 #                                             # under --json/--raw)
 #           claude-usage --table              # render as a bordered grid with
 #                                             # named columns (ACCOUNT/SPEND/7D/
-#                                             # <model>/5H), each cell a percent
-#                                             # + its own reset. A FORMAT, not an
-#                                             # account selector: bare = just this
-#                                             # account; combine with --all for
-#                                             # every account. The $-cap column
-#                                             # shows only if some account has a
-#                                             # cap, so uneven setups still align
+#                                             # <model>/5H), each cell a themed
+#                                             # bar + percent + its own reset. A
+#                                             # FORMAT, not an account selector:
+#                                             # bare = just this account; combine
+#                                             # with --all for every account. The
+#                                             # $-cap column shows if some account
+#                                             # has a cap that's live (credits
+#                                             # enabled) OR has real spend — same
+#                                             # spend_on gate as pretty mode — so
+#                                             # uneven setups still align
 #           claude-usage --all --table        # every account, one row each
 #           claude-usage --table --no-borders # drop the box-drawing borders
+#           claude-usage --table --no-bars    # bare numeric cells, no bars
+#                                             # (CLAUDE_USAGE_TABLE_BARS=false)
 #           claude-usage --json               # machine-readable summary
 #           claude-usage --raw                # full untouched endpoint response
 #           claude-usage --fresh              # blocking refresh, guaranteed current
@@ -88,7 +93,8 @@
 #           CLAUDE_USAGE_SPEND_PREFIX      default for --spend-prefix ('')
 #           CLAUDE_USAGE_LIMITS_PREFIX     default for --limits-prefix ('')
 #           CLAUDE_USAGE_DIVISOR   credits→dollars divisor (default: 100 = cents)
-#           CLAUDE_USAGE_BAR_WIDTH cells per bar in --pretty (default: 10)
+#           CLAUDE_USAGE_BAR_WIDTH cells per bar in --pretty and --table (10)
+#           CLAUDE_USAGE_TABLE_BARS default for --bars/--no-bars in --table (true)
 #           CLAUDE_USAGE_SEP       metric delimiter, both modes (default: per-mode)
 #           CLAUDE_USAGE_TTL       cache max age in seconds before a background
 #                                  refresh is triggered (default: 120)
@@ -317,9 +323,30 @@ _claude_usage_render_table() {
     --argjson showlr "$show_limit_resets" --argjson showreset "$show_reset" \
     --argjson showspendreset "$show_spend_reset" \
     --arg rpfx "$reset_prefix" --arg spendreset "$spend_reset" \
-    --argjson borders "$borders" '
+    --argjson borders "$borders" \
+    --arg gfull "$gfull" --arg gpartial "$gpartial" --arg gempty "$gempty" \
+    --arg lbr "$lbr" --arg rbr "$rbr" --argjson bw "$bar_width" \
+    --argjson bars "$table_bars" '
     def paint($c; $s): if ($c | length) > 0 then "[\($c)m\($s)[0m" else $s end;
     def colf($p): if $p == null then $dim elif $p >= $thi then $chi elif $p >= $tmid then $cmid else $clo end;
+    # Theme-glyph progress bar, identical geometry to the pretty/statusline
+    # renderer (full + fractional-ramp partial + empty cells over $bw columns),
+    # framed by the theme brackets. Every glyph is one display column, so the
+    # rendered string length feeds the plain-width padding math unchanged.
+    def mkbar($p):
+      (if $p < 0 then 0 elif $p > 100 then 100 else $p end) as $pct
+      | ($pct / 100 * $bw * 8) as $units
+      | (($units / 8) | floor) as $full
+      | (($units - ($full * 8)) | floor) as $partial
+      | ([$full, $bw] | min) as $fc
+      | ($gpartial | length) as $pn
+      | (($fc < $bw) and ($partial >= 1) and ($pn > 0)) as $hasp
+      | (if $hasp then (($partial * $pn / 8) | floor) else 0 end) as $pidx
+      | ($fc + (if $hasp then 1 else 0 end)) as $used
+      | (($gfull * $fc) // "")
+        + (if $hasp then ($gpartial | .[$pidx:($pidx + 1)]) else "" end)
+        + (($gempty * ($bw - $used)) // "");
+    def barof($p): if $bars then "\($lbr)\(mkbar($p))\($rbr) " else "" end;
     def d2: (. * 100 | round / 100);
     def dropzeros: tostring | if test("\\.[0-9]+$") then sub("0+$"; "") | sub("\\.$"; "") else . end;
     def pad($n): if $n > 0 then " " * $n else "" end;
@@ -332,11 +359,17 @@ _claude_usage_render_table() {
           end
       end;
     def rsuf($show; $cd): if ($show and (($cd // "") != "")) then {p: " \($rpfx)\($cd)", r: (" " + paint($dim; "\($rpfx)\($cd)"))} else {p:"", r:""} end;
+    # Matches the pretty spend_on gate: a limit is present AND the cap is either
+    # live (credits enabled) OR carries real recorded spend. A dormant, never-used
+    # disabled cap ($0, toggle off) is suppressed here just as pretty omits it, so
+    # the two renderers agree; a toggled-off cap with accrued spend still shows.
+    def spendlive: (.usage != null) and ((.usage.spend.limit // null) != null)
+                   and (((.usage.spend.enabled // false) == true) or ((.usage.spend.spent // 0) > 0));
     map({
       account: .account,
-      spend: (if (.usage != null and (.usage.spend.limit // null) != null)
+      spend: (if spendlive
               then "$\(.usage.spend.spent|d2|dropzeros)/$\(.usage.spend.limit|d2|dropzeros)" else null end),
-      spend_pct: (if (.usage != null and (.usage.spend.limit // null) != null) then (.usage.spend.percent // 0) else null end),
+      spend_pct: (if spendlive then (.usage.spend.percent // 0) else null end),
       m: (if .usage == null then {} else
             reduce ((.usage.limits // [])[]) as $l ({};
               .[ (if $l.kind=="weekly_all" then "7d"
@@ -360,13 +393,15 @@ _claude_usage_render_table() {
         elif $c.k == "spend" then
           (if $r.spend == null then {plain:"·", rich: paint($dim; "·")}
            else (rsuf($showspendreset; $spendreset)) as $rs
-                | {plain: ($r.spend + $rs.p), rich: (paint(colf($r.spend_pct); $r.spend) + $rs.r)} end)
+                | (barof($r.spend_pct)) as $b
+                | {plain: ($b + $r.spend + $rs.p), rich: (paint(colf($r.spend_pct); $b + $r.spend) + $rs.r)} end)
         else ($r.m[$c.k]) as $cell |
           (if $cell == null or $cell.pct == null then {plain:"·", rich: paint($dim; "·")}
            else (left($cell.resets)) as $cd
               | (if $c.k == "5h" then rsuf($showreset; $cd) else rsuf($showlr; $cd) end) as $rs
+              | (barof($cell.pct)) as $b
               | ("\($cell.pct|round)%") as $pv
-              | {plain: ($pv + $rs.p), rich: (paint(colf($cell.pct); $pv) + $rs.r)} end)
+              | {plain: ($b + $pv + $rs.p), rich: (paint(colf($cell.pct); $b + $pv) + $rs.r)} end)
         end ] })) as $M
     | [ range(0; ($cols|length)) as $i | ([ ($cols[$i].name|length) ] + [ $M[] | .cells[$i].plain | length ] | max) ] as $W
     | (($cols | length)) as $nc
@@ -421,6 +456,9 @@ claude-usage() {
   # --cache-file: internal — render a specific JSON file, skipping fetch/cache
   # (how --all feeds each account's raw response back through the renderer).
   local allmode=0 table=0 borders=1 cache_file_override=""
+  # Theme-glyph progress bars inside --table cells (on by default). --no-bars
+  # (or CLAUDE_USAGE_TABLE_BARS=false) falls back to the bare numeric grid.
+  local table_bars="${CLAUDE_USAGE_TABLE_BARS:-true}"
   # Dollar-segment toggles (combined Max+credits view): the monthly spend cap
   # and the purchased-credit balance. Env defaults, flags override below.
   local show_spend="${CLAUDE_USAGE_SHOW_SPEND:-true}"
@@ -531,6 +569,11 @@ claude-usage() {
       --all|--all-accounts|--all-profiles) allmode=1 ;;
       --table) table=1 ;;
       --no-borders|--no-border) borders=0 ;;
+      --bars|--table-bars) table_bars=true ;;
+      --no-bars|--no-table-bars) table_bars=false ;;
+      --bars=*|--table-bars=*)
+        table_bars="${1#*=}"
+        [[ $table_bars == (true|false) ]] || { print -u2 "claude-usage: --bars takes true or false"; return 1 } ;;
       --cache-file)
         [[ -n "${2+x}" ]] || { print -u2 "claude-usage: --cache-file requires a path"; return 1 }
         cache_file_override="$2"; shift ;;
@@ -543,11 +586,11 @@ claude-usage() {
         dir="$2"; shift ;;
       --dir=*)    dir="${1#--dir=}" ;;
       -h|--help)
-        print "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--fresh|--no-block] [--version]"
+        print "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--no-bars] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--fresh|--no-block] [--version]"
         print "themes: ${(j: :)all_themes}  (--list-themes to script it, --themes to preview)"
         return 0 ;;
       *)
-        print -u2 "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--fresh|--no-block]"
+        print -u2 "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--no-bars] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--fresh|--no-block]"
         return 1 ;;
     esac
     shift
@@ -697,9 +740,10 @@ claude-usage() {
   #   --all   : one line per account, each rendered through THIS renderer via
   #             --cache-file (recursion, so every theme/flag applies). --json/
   #             --raw emit a valid [{account,usage}] array instead.
-  #   --table : accounts as rows in aligned, NAMED columns (percent per window).
-  #             The $-spend column appears only when some account has a cap —
-  #             which is exactly the raggedness a table fixes.
+  #   --table : accounts as rows in aligned, NAMED columns (bar + percent per
+  #             window). The $-spend column appears only when some account has a
+  #             cap that's live (credits enabled) OR carries real spend — the
+  #             pretty spend_on gate — which is exactly the raggedness a table fixes.
   if (( allmode )); then
     command -v claude-profile >/dev/null 2>&1 || {
       print -u2 "claude-usage: --all needs the companion 'claude-profile' tool (not found)"
@@ -946,10 +990,12 @@ claude-usage() {
             ((.extra_usage.monthly_limit // 0) / $div) as $l |
             "$\($s | fmt2) / $\($l | fmt2) (\($s / $l * 100 | round)%\(rst))"
           else "" end;
-        # Is the dollar cap live? (usage credits can be toggled off in the GUI)
+        # Should the dollar cap show? Live (credits enabled) OR carrying real
+        # recorded usage — a toggled-off cap still leaves accrued spend worth
+        # surfacing; only a dormant, never-used cap ($0, toggle off) stays hidden.
         def spend_on:
-          if .spend != null then (.spend.enabled // false)
-          else (.extra_usage.is_enabled // false) end;
+          if .spend != null then ((.spend.enabled // false) or ((.spend.used | money) > 0))
+          else ((.extra_usage.is_enabled // false) or ((.extra_usage.used_credits // 0) > 0)) end;
         # Purchased-credit balance segment ("" until the API reports one — the
         # field exists in the schema but is null-so-far server-side)
         def balance_line:
@@ -1082,10 +1128,13 @@ claude-usage() {
             (if $l > 0 then $s / $l * 100 else 0 end) as $p |
             paint(col($p); "$\($s | fmt2)/$\($l | fmt2) \($lbr)\(mkbar($p))\($rbr)\($p | round)%") + rst
           else "" end;
-        # Is the dollar cap live? (usage credits can be toggled off in the GUI)
+        # Should the dollar cap show? Yes when it is live (credits enabled) OR
+        # when it carries real recorded usage — a toggled-off cap still leaves
+        # accrued spend worth surfacing (e.g. $127.36 against a $100 cap). Only
+        # a dormant, never-used cap ($0 spent, toggle off) stays hidden.
         def spend_on:
-          if .spend != null then (.spend.enabled // false)
-          else (.extra_usage.is_enabled // false) end;
+          if .spend != null then ((.spend.enabled // false) or ((.spend.used | money) > 0))
+          else ((.extra_usage.is_enabled // false) or ((.extra_usage.used_credits // 0) > 0)) end;
         # Purchased-credit balance segment, dimmed — no percent, so no bar
         # ("" until the API reports one; the field is null-so-far server-side)
         def balance_seg:
