@@ -317,6 +317,102 @@ claude-usage --dir $rl --json | jq -e '(.limits|length)==3 and (.limits[0].label
 claude-usage --dir $combo --json | jq -e '.spend.limit==40 and .spend.balance==100 and .spend.enabled==true and (.limits|length)==3' >/dev/null \
   && ok "json combined shape" || bad "json combined shape" "$(claude-usage --dir $combo --json)"
 
+# ---- --cache-file: render a specific JSON file, no fetch/cache ------------
+cf="$tmp/cachefile.json"; print -r -- "$RL" > "$cf"
+has "cache-file pretty renders 7d"  "$(claude-usage --cache-file "$cf" --no-color)" "7d"
+has "cache-file pretty renders 5h"  "$(claude-usage --cache-file "$cf" --no-color)" "5h"
+eq  "cache-file text" "$(claude-usage --cache-file "$cf" --text-only)" \
+    "7d 20% | Opus 27% | 5h 49%"
+claude-usage --cache-file "$tmp/does-not-exist.json" >/dev/null 2>&1
+(( $? == 1 )) && ok "cache-file missing → rc 1" || bad "cache-file missing → rc 1" "rc=$?"
+
+# ---- --all: opt-in bridge to claude-profile -------------------------------
+# With no claude-profile on PATH/as a function, --all must fail cleanly.
+claude-usage --all >/dev/null 2>&1
+(( $? == 1 )) && ok "all without claude-profile → rc 1" || bad "all without claude-profile → rc 1" "rc=$?"
+
+# Stub the companion tool: emit "<account>\t<json>" NDJSON — one healthy
+# account, one unavailable (empty json field). The real porcelain emits
+# COMPACT single-line JSON (json.dumps separators); mirror that (the contract
+# is one physical line per account), so compact $RL through jq first.
+RLC=$(print -r -- "$RL" | jq -c .)
+claude-profile() {
+  [[ "$1" == "usage-json" ]] || return 0
+  printf '%s\t%s\n' "acctA" "$RLC"
+  printf '%s\t\n'   "acctB"          # unavailable
+}
+allout=$(claude-usage --all --no-color)
+has "all labels acctA"        "$allout" "acctA"
+has "all renders acctA bar"   "$allout" "7d"
+has "all acctB unavailable"   "$allout" "acctB  (usage unavailable)"
+has "all text threads flags"  "$(claude-usage --all --text-only)" \
+    "acctA  7d 20% | Opus 27% | 5h 49%"
+# json mode → a valid array of {account, usage}; gaps become null
+alljson=$(claude-usage --all --json)
+print -r -- "$alljson" | jq -e '
+  type=="array" and length==2
+  and .[0].account=="acctA" and (.[0].usage.limits|length)==3
+  and .[1].account=="acctB" and .[1].usage==null' >/dev/null \
+  && ok "all json array shape" || bad "all json array shape" "$alljson"
+unfunction claude-profile
+
+# ---- --all --table: aligned, named columns across uneven accounts ---------
+# acctA has a $-cap AND plan limits; acctB has only limits → the union-of-
+# columns table must show a SPEND column with a dim "·" for acctB.
+COMBOC=$(print -r -- "$COMBO" | jq -c .)
+# RL variant with a (far-future) reset on the 7d window, none on 5h.
+RLR='{"limits":[
+  {"kind":"weekly_all","percent":20,"severity":"normal","resets_at":"2099-01-01T00:00:00Z"},
+  {"kind":"weekly_scoped","percent":27,"severity":"normal","scope":{"model":{"display_name":"Opus"}}},
+  {"kind":"session","percent":49,"severity":"normal"}]}'
+RLRC=$(print -r -- "$RLR" | jq -c .)
+claude-profile() {
+  [[ "$1" == "usage-json" ]] || return 0
+  printf '%s\t%s\n' "acctA" "$COMBOC"
+  printf '%s\t%s\n' "acctB" "$RLC"
+}
+tout=$(claude-usage --all --table --no-color)
+has "table header ACCOUNT" "$tout" "ACCOUNT"
+has "table header SPEND"   "$tout" "SPEND"
+has "table header 7D"      "$tout" "7D"
+has "table header OPUS"    "$tout" "OPUS"
+has "table header 5H"      "$tout" "5H"
+has "table acctA spend"    "$tout" '$0/$40'
+has "table acctB present"  "$tout" "acctB"
+has "table missing → dot"  "$tout" "·"
+# Borders are on by default; --no-borders drops the box-drawing chars.
+has    "table borders by default" "$tout" "┌"
+has    "table vertical rule"      "$tout" "│"
+hasnot "table --no-borders"       "$(claude-usage --all --table --no-borders --no-color)" "│"
+unfunction claude-profile
+
+# --table is a FORMAT, orthogonal to --all: bare it renders a SINGLE account
+# (labelled by its config-dir basename), no claude-profile call.
+sdir=$(seed solo "$RL")
+sout=$(claude-usage --dir "$sdir" --table --no-borders --no-color)
+has "single-account table label" "$sout" "solo"
+has "single-account table 7D"    "$sout" "7D"
+has "single-account table 5h"    "$sout" "49%"
+
+# Per-cell resets mirror the theme: shown with --reset-prefix, gone when the
+# matching toggle is off (7d reset present here, none on 5h).
+claude-profile() {
+  [[ "$1" == "usage-json" ]] || return 0
+  printf '%s\t%s\n' "acctR" "$RLRC"
+}
+has    "table cell reset shown"  "$(claude-usage --all --table --no-borders --reset-prefix 'R:' --no-color)" "R:"
+hasnot "table reset toggle off"  "$(claude-usage --all --table --no-borders --reset-prefix 'R:' --show-limit-resets=false --no-color)" "R:"
+unfunction claude-profile
+
+# No account has a $-cap → the SPEND column must not appear at all.
+claude-profile() {
+  [[ "$1" == "usage-json" ]] || return 0
+  printf '%s\t%s\n' "a" "$RLC"
+  printf '%s\t%s\n' "b" "$RLC"
+}
+hasnot "table omits SPEND when none have it" "$(claude-usage --all --table --no-borders --no-color)" "SPEND"
+unfunction claude-profile
+
 # ---- README SVG generator (smoke; explicit output paths → README untouched) -
 svg="$tmp/demo-test.svg"; tsvg="$tmp/themes-test.svg"
 zsh "$root/tools/generate-readme-svg.zsh" "$svg" "$tsvg" >/dev/null 2>&1

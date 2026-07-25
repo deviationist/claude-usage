@@ -40,6 +40,27 @@
 #                                             # text, " | " pretty)
 #           claude-usage --sep ' / '          # custom metric delimiter (both modes)
 #           claude-usage --dir PATH           # another account's Claude config dir
+#           claude-usage --all                # one labelled line per account,
+#                                             # across every claude-profile
+#                                             # profile/serial account (opt-in
+#                                             # bridge; needs the companion
+#                                             # claude-profile tool installed —
+#                                             # it fetches each account's usage,
+#                                             # refreshing parked credentials;
+#                                             # honours every render flag, and
+#                                             # emits a {account,usage}[] array
+#                                             # under --json/--raw)
+#           claude-usage --table              # render as a bordered grid with
+#                                             # named columns (ACCOUNT/SPEND/7D/
+#                                             # <model>/5H), each cell a percent
+#                                             # + its own reset. A FORMAT, not an
+#                                             # account selector: bare = just this
+#                                             # account; combine with --all for
+#                                             # every account. The $-cap column
+#                                             # shows only if some account has a
+#                                             # cap, so uneven setups still align
+#           claude-usage --all --table        # every account, one row each
+#           claude-usage --table --no-borders # drop the box-drawing borders
 #           claude-usage --json               # machine-readable summary
 #           claude-usage --raw                # full untouched endpoint response
 #           claude-usage --fresh              # blocking refresh, guaranteed current
@@ -134,7 +155,7 @@
 # ============================================================================
 
 # Version, printed by `claude-usage --version`. Bump on release + tag.
-typeset -g CLAUDE_USAGE_VERSION="0.4.0"
+typeset -g CLAUDE_USAGE_VERSION="0.5.0"
 
 # The API reports credits worth $0.01 — divide by 100 for dollars.
 export CLAUDE_USAGE_DIVISOR="${CLAUDE_USAGE_DIVISOR:-100}"
@@ -275,6 +296,96 @@ _claude_usage_refresh() {
 # ----------------------------------------------------------------------------
 # claude-usage [--dir PATH] [--json|--raw] [--fresh|--no-block]
 # ----------------------------------------------------------------------------
+# Render a JSON array (NDJSON on stdin) of {account, usage-summary} as an
+# aligned, named-column table. Shared by `--table` (single account) and
+# `--all --table` (every account). Reads the caller's resolved theme locals
+# (clo/cmid/chi/dim/tmid/thi) via zsh dynamic scope. Columns are the UNION
+# across accounts; a missing metric is a dim "\u00b7"; padding is computed
+# from the uncoloured text so ANSI never skews alignment.
+_claude_usage_render_table() {
+  # Render {account, usage-summary} NDJSON (stdin) as an aligned, named-column
+  # table. Shared by `--table` (single account) and `--all --table` (every
+  # account). Uses the caller's resolved theme + toggle locals via zsh dynamic
+  # scope. Columns = the UNION across accounts; a missing metric is a dim
+  # dot; each cell carries its own reset countdown (dimmed, --reset-prefix
+  # label) just like the bars, gated by --show-limit-resets / --show-reset /
+  # --show-spend-reset. Box borders by default (--no-borders drops them).
+  # Padding is computed from the UNCOLOURED text so ANSI never skews alignment.
+  jq -s -r \
+    --arg clo "$clo" --arg cmid "$cmid" --arg chi "$chi" --arg dim "$dim" \
+    --argjson tmid "$tmid" --argjson thi "$thi" \
+    --argjson showlr "$show_limit_resets" --argjson showreset "$show_reset" \
+    --argjson showspendreset "$show_spend_reset" \
+    --arg rpfx "$reset_prefix" --arg spendreset "$spend_reset" \
+    --argjson borders "$borders" '
+    def paint($c; $s): if ($c | length) > 0 then "[\($c)m\($s)[0m" else $s end;
+    def colf($p): if $p == null then $dim elif $p >= $thi then $chi elif $p >= $tmid then $cmid else $clo end;
+    def d2: (. * 100 | round / 100);
+    def dropzeros: tostring | if test("\\.[0-9]+$") then sub("0+$"; "") | sub("\\.$"; "") else . end;
+    def pad($n): if $n > 0 then " " * $n else "" end;
+    def left($r):
+      if ($r == null) then ""
+      else (try (($r | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601) - now | floor) catch -1) as $rem
+        | if $rem <= 0 then ""
+          else (($rem/86400)|floor) as $dd | ((($rem%86400)/3600)|floor) as $h | ((($rem%3600)/60)|floor) as $m
+             | if $dd>0 then "\($dd)d\($h)h" elif $h>0 then "\($h)h\($m)m" else "\($m)m" end
+          end
+      end;
+    def rsuf($show; $cd): if ($show and (($cd // "") != "")) then {p: " \($rpfx)\($cd)", r: (" " + paint($dim; "\($rpfx)\($cd)"))} else {p:"", r:""} end;
+    map({
+      account: .account,
+      spend: (if (.usage != null and (.usage.spend.limit // null) != null)
+              then "$\(.usage.spend.spent|d2|dropzeros)/$\(.usage.spend.limit|d2|dropzeros)" else null end),
+      spend_pct: (if (.usage != null and (.usage.spend.limit // null) != null) then (.usage.spend.percent // 0) else null end),
+      m: (if .usage == null then {} else
+            reduce ((.usage.limits // [])[]) as $l ({};
+              .[ (if $l.kind=="weekly_all" then "7d"
+                  elif $l.kind=="session" then "5h"
+                  elif $l.kind=="weekly_scoped" then ("m:" + ($l.label // "scoped"))
+                  else ($l.label // $l.kind) end) ] = {pct: $l.percent, resets: $l.resets_at})
+          end)
+    }) as $R
+    | (([ $R[] | select(.spend != null) ] | length) > 0) as $hasSpend
+    | ([ $R[] | .m | keys[] | select(startswith("m:")) ]
+        | reduce .[] as $k ([]; if any(.[]; . == $k) then . else . + [$k] end)) as $models
+    | (any($R[]; .m["7d"] != null)) as $has7d
+    | (any($R[]; .m["5h"] != null)) as $has5h
+    | ([ {k:"account", name:"ACCOUNT"} ]
+       + (if $hasSpend then [ {k:"spend", name:"SPEND"} ] else [] end)
+       + (if $has7d then [ {k:"7d", name:"7D"} ] else [] end)
+       + [ $models[] | {k:., name:(.[2:] | ascii_upcase)} ]
+       + (if $has5h then [ {k:"5h", name:"5H"} ] else [] end)) as $cols
+    | ($R | map(. as $r | { cells: [ $cols[] | . as $c |
+        if $c.k == "account" then {plain:$r.account, rich:$r.account}
+        elif $c.k == "spend" then
+          (if $r.spend == null then {plain:"·", rich: paint($dim; "·")}
+           else (rsuf($showspendreset; $spendreset)) as $rs
+                | {plain: ($r.spend + $rs.p), rich: (paint(colf($r.spend_pct); $r.spend) + $rs.r)} end)
+        else ($r.m[$c.k]) as $cell |
+          (if $cell == null or $cell.pct == null then {plain:"·", rich: paint($dim; "·")}
+           else (left($cell.resets)) as $cd
+              | (if $c.k == "5h" then rsuf($showreset; $cd) else rsuf($showlr; $cd) end) as $rs
+              | ("\($cell.pct|round)%") as $pv
+              | {plain: ($pv + $rs.p), rich: (paint(colf($cell.pct); $pv) + $rs.r)} end)
+        end ] })) as $M
+    | [ range(0; ($cols|length)) as $i | ([ ($cols[$i].name|length) ] + [ $M[] | .cells[$i].plain | length ] | max) ] as $W
+    | (($cols | length)) as $nc
+    | def cellstr($cells; $i): ($cells[$i]) as $x | ($x.rich + pad($W[$i] - ($x.plain|length)));
+      def hbar($l; $m; $rr): paint($dim; $l + ([ $W[] | ("─" * (. + 2)) ] | join($m)) + $rr);
+      def rowstr($cells): paint($dim; "│") + ([ range(0; $nc) as $i | " " + cellstr($cells; $i) + " " ] | join(paint($dim; "│"))) + paint($dim; "│");
+      ([ $cols[] | {plain: .name, rich: paint($dim; .name)} ]) as $hdr |
+      if ($borders == 1) then
+        ( hbar("┌"; "┬"; "┐"),
+          rowstr($hdr),
+          hbar("├"; "┼"; "┤"),
+          ( $M[] | rowstr(.cells) ),
+          hbar("└"; "┴"; "┘") )
+      else
+        ( ( [ range(0; $nc) as $i | cellstr($hdr; $i) ] | join("  ") ),
+          ( $M[] | [ range(0; $nc) as $i | cellstr(.cells; $i) ] | join("  ") ) )
+      end
+  '
+}
 claude-usage() {
   emulate -L zsh
   setopt extended_glob   # for the '#'-quantifier patterns in the config parser
@@ -306,6 +417,10 @@ claude-usage() {
   fi
 
   local ttl="${CLAUDE_USAGE_TTL:-120}" mode=pretty force=0 noblock=0 show_reset=true
+  # --all: render every claude-profile account (opt-in bridge, see below).
+  # --cache-file: internal — render a specific JSON file, skipping fetch/cache
+  # (how --all feeds each account's raw response back through the renderer).
+  local allmode=0 table=0 borders=1 cache_file_override=""
   # Dollar-segment toggles (combined Max+credits view): the monthly spend cap
   # and the purchased-credit balance. Env defaults, flags override below.
   local show_spend="${CLAUDE_USAGE_SHOW_SPEND:-true}"
@@ -350,9 +465,15 @@ claude-usage() {
                        compact retro shade dots spark line dracula nord gruvbox)
 
   # Account dir: --dir > CLAUDE_USAGE_DIR > CLAUDE_CONFIG_DIR > ~/.claude.
-  # Deliberately profile-agnostic: no coupling to claude-profile.zsh or any
-  # cwd-override convention — callers wanting another seat pass --dir.
+  # The single-account core stays profile-agnostic: no coupling to
+  # claude-profile or any cwd-override convention — callers wanting another
+  # seat pass --dir. The one bridge is the OPT-IN --all mode below, which only
+  # engages when claude-profile is installed and the user asks for it.
   local dir="${CLAUDE_USAGE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}"
+
+  # Snapshot the raw argv before the parse loop consumes it, so --all can
+  # forward every flag (theme, mode, prefixes, …) to each per-account render.
+  local -a _argv=("$@")
 
   while (( $# )); do
     case "$1" in
@@ -407,6 +528,13 @@ claude-usage() {
       --no-color|--no-colour) nocolor=1 ;;
       --list-themes) print "${(j: :)all_themes}"; return 0 ;;
       --themes|--preview-themes) mode=themes ;;
+      --all|--all-accounts|--all-profiles) allmode=1 ;;
+      --table) table=1 ;;
+      --no-borders|--no-border) borders=0 ;;
+      --cache-file)
+        [[ -n "${2+x}" ]] || { print -u2 "claude-usage: --cache-file requires a path"; return 1 }
+        cache_file_override="$2"; shift ;;
+      --cache-file=*) cache_file_override="${1#--cache-file=}" ;;
       --version|-V) print "claude-usage $CLAUDE_USAGE_VERSION"; return 0 ;;
       --fresh)      force=1 ;;
       --no-block)   noblock=1 ;;
@@ -415,11 +543,11 @@ claude-usage() {
         dir="$2"; shift ;;
       --dir=*)    dir="${1#--dir=}" ;;
       -h|--help)
-        print "usage: claude-usage [--dir PATH] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--fresh|--no-block] [--version]"
+        print "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--fresh|--no-block] [--version]"
         print "themes: ${(j: :)all_themes}  (--list-themes to script it, --themes to preview)"
         return 0 ;;
       *)
-        print -u2 "usage: claude-usage [--dir PATH] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--fresh|--no-block]"
+        print -u2 "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--fresh|--no-block]"
         return 1 ;;
     esac
     shift
@@ -551,9 +679,105 @@ claude-usage() {
   # value), strips every SGR while keeping the bars — unlike --text-only.
   if (( nocolor )) || [[ -n ${NO_COLOR:-} ]]; then clo='' cmid='' chi='' dim=''; fi
 
-  local cache; cache=$(_claude_usage_cache_path "$dir")
+  # Monthly spend-cap reset label ("" = don't show). Derived, not from the API:
+  # usage credits reset on the 1st of the next calendar month. Computed here
+  # (before the --all/--table block) so the table can label the $-cap column.
+  local spend_reset=""
+  if [[ $show_spend_reset == true ]]; then
+    local -a _mn=(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec)
+    spend_reset="${_mn[$(( 10#$(date +%m) % 12 + 1 ))]} 1"
+  fi
 
-  if (( force )) || [[ ! -f $cache ]]; then
+  # ---- --all / --table: multi-account views via claude-profile --------------
+  # Opt-in bridge to the companion `claude-profile` juggler: it owns the
+  # credentials (incl. PARKED serial accounts it can token-refresh) and hands
+  # back each account's usage; we own presentation. It emits "<account>\t<json>"
+  # per line (empty = unavailable). Placed AFTER theme resolution so --table can
+  # colour cells with the resolved palette.
+  #   --all   : one line per account, each rendered through THIS renderer via
+  #             --cache-file (recursion, so every theme/flag applies). --json/
+  #             --raw emit a valid [{account,usage}] array instead.
+  #   --table : accounts as rows in aligned, NAMED columns (percent per window).
+  #             The $-spend column appears only when some account has a cap —
+  #             which is exactly the raggedness a table fixes.
+  if (( allmode )); then
+    command -v claude-profile >/dev/null 2>&1 || {
+      print -u2 "claude-usage: --all needs the companion 'claude-profile' tool (not found)"
+      return 1
+    }
+    # Forward every flag EXCEPT the multi-account toggles to each child render.
+    local -a _fwd; local _arg
+    for _arg in "${_argv[@]}"; do
+      [[ $_arg == (--all|--all-accounts|--all-profiles|--table) ]] && continue
+      _fwd+=("$_arg")
+    done
+    local _nd
+    _nd="$(claude-profile usage-json --all 2>/dev/null)"
+    [[ -n $_nd ]] || { print -u2 "claude-usage: claude-profile reported no accounts"; return 1 }
+    local -a _lines=("${(@f)_nd}")
+    local _l _name _json _tmpf
+
+    if (( table )) || [[ $mode == (json|raw) ]]; then
+      # Collect structured {account, usage}. --table needs the --json SUMMARY
+      # per account (regardless of the caller's mode); json/raw pass through.
+      local _child; local -a _items
+      for _l in "${_lines[@]}"; do
+        [[ -n $_l ]] || continue
+        _name="${_l%%$'\t'*}"; _json="${_l#*$'\t'}"
+        _child=null
+        if [[ -n $_json ]]; then
+          _tmpf="$(mktemp "${TMPDIR:-/tmp}/claude-usage-all.XXXXXX")"
+          print -r -- "$_json" > "$_tmpf"
+          if (( table )); then
+            _child="$(claude-usage --cache-file "$_tmpf" "${_fwd[@]}" --json)"
+          else
+            _child="$(claude-usage --cache-file "$_tmpf" "${_fwd[@]}")"
+          fi
+          rm -f "$_tmpf"
+        fi
+        _items+=("$(jq -n --arg n "$_name" --argjson u "${_child:-null}" '{account:$n, usage:$u}')")
+      done
+      if (( ! table )); then
+        printf '%s\n' "${_items[@]}" | jq -s '.'
+        return 0
+      fi
+      # ---- Table renderer: union of columns across accounts, aligned on the
+      # VISIBLE width (padding computed from the uncoloured cell text, so ANSI
+      # never skews the columns). Cells are per-window percents tinted by the
+      # same thresholds as the bars; a missing metric is a dim "·".
+      printf '%s\n' "${_items[@]}" | _claude_usage_render_table
+      return 0
+    fi
+
+    # Default --all: one labelled, fully-rendered line per account.
+    local _w=0
+    for _l in "${_lines[@]}"; do _name="${_l%%$'\t'*}"; (( ${#_name} > _w )) && _w=${#_name}; done
+    for _l in "${_lines[@]}"; do
+      [[ -n $_l ]] || continue
+      _name="${_l%%$'\t'*}"; _json="${_l#*$'\t'}"
+      printf '%-*s  ' "$_w" "$_name"
+      if [[ -z $_json ]]; then
+        print -r -- "(usage unavailable)"
+      else
+        _tmpf="$(mktemp "${TMPDIR:-/tmp}/claude-usage-all.XXXXXX")"
+        print -r -- "$_json" > "$_tmpf"
+        claude-usage --cache-file "$_tmpf" "${_fwd[@]}"
+        rm -f "$_tmpf"
+      fi
+    done
+    return 0
+  fi
+
+  # --cache-file (from --all): render this exact JSON file, no fetch/cache.
+  local cache
+  if [[ -n $cache_file_override ]]; then
+    cache="$cache_file_override"
+    [[ -f $cache ]] || { print -u2 "claude-usage: cache file not found: $cache"; return 1 }
+  else
+    cache=$(_claude_usage_cache_path "$dir")
+  fi
+
+  if [[ -z $cache_file_override ]] && { (( force )) || [[ ! -f $cache ]] }; then
     if (( noblock )); then
       # Statusline mode: NEVER block. No cache yet → kick off a background
       # refresh, print nothing, exit clean; the next repaint picks it up.
@@ -578,7 +802,7 @@ claude-usage() {
         print -u2 "claude-usage: refresh failed (code $rc), showing cached value"
       fi
     fi
-  else
+  elif [[ -z $cache_file_override ]]; then
     # Warm path: serve cache instantly; revalidate behind the scenes if stale.
     # The ( ... & ) subshell detaches from job control: no [1] 12345 noise.
     local mtime
@@ -588,13 +812,6 @@ claude-usage() {
     fi
   fi
 
-  # Monthly spend-cap reset label ("" = don't show). Derived, not from the
-  # API: usage credits reset on the 1st of the next calendar month.
-  local spend_reset=""
-  if [[ $show_spend_reset == true ]]; then
-    local -a _mn=(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec)
-    spend_reset="${_mn[$(( 10#$(date +%m) % 12 + 1 ))]} 1"
-  fi
 
   # Metric separator: an explicit --sep / CLAUDE_USAGE_SEP wins for both modes;
   # otherwise each mode keeps its own default (" | " plain, " · " dimmed).
@@ -604,6 +821,21 @@ claude-usage() {
   local text_gsep pretty_gsep
   if (( gsep_set )); then text_gsep="$gsep_override"; pretty_gsep="$gsep_override"
   else text_gsep=" || "; pretty_gsep=" | "; fi
+
+  # ---- --table (single account): one row, same named-column grid as --all ---
+  # `--table` is a FORMAT, orthogonal to account selection: bare it renders just
+  # this account (labelled by its config-dir basename); `--all --table` renders
+  # every account (handled in the --all block above). Reuses the shared table
+  # renderer via the account's own --json summary.
+  if (( table )); then
+    local _sum _lbl
+    _sum="$(claude-usage --cache-file "$cache" --json)"
+    [[ -n $_sum ]] || _sum=null
+    _lbl="${dir:t}"; _lbl="${_lbl#.}"                 # "~/.claude" → "claude"
+    jq -n --arg n "$_lbl" --argjson u "$_sum" '{account:$n, usage:$u}' \
+      | _claude_usage_render_table
+    return 0
+  fi
 
   case $mode in
     raw)
