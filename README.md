@@ -172,6 +172,55 @@ freshest non-expired token across all sources wins. Nothing is ever written to
 those stores — `claude-usage` only reads the token Claude Code already keeps
 locally, and talks only to the standard Anthropic API host.
 
+## Multiple accounts (`--all`)
+
+`claude-usage` on its own shows **one** seat. If you also run the companion
+[`claude-profile`](../claude-profile) subscription juggler — several profiles
+and/or serial accounts on one machine — `--all` renders **every** account, one
+labelled line each:
+
+```console
+$ claude-usage --all
+max20x  $99.66/$100 ▕██████████▏100% Aug 1 | 7d▕████████░░▏80% 1d17h · Fable▕██████████▏100% 1d17h · 5h▕░░░░░░░░░░▏0%
+max5x   7d▕▌░░░░░░░░░▏5% 6d13h · Fable▕░░░░░░░░░░▏0% · 5h▕██░░░░░░░░▏21% 3h46m
+```
+
+It's an **opt-in bridge**, not a coupling: with no `claude-profile` installed
+the flag just errors, and the single-account paths are untouched. Every render
+flag threads through per account (`--all --theme nord`, `--all --text-only`,
+`--all --no-color`), and `--all --json` / `--all --raw` emit a machine-readable
+`[{account, usage}]` array instead of prefixed lines.
+
+When accounts differ in shape — one has a `$`-cap, another doesn't — the free
+lines go ragged. **`--table`** lays them out in an aligned, bordered grid with
+named columns instead:
+
+```console
+$ claude-usage --all --table
+┌─────────┬───────────────────┬───────────┬────────────┬───────────┐
+│ ACCOUNT │ SPEND             │ 7D        │ FABLE      │ 5H        │
+├─────────┼───────────────────┼───────────┼────────────┼───────────┤
+│ max20x  │ $99.66/$100 Aug 1 │ 80% 1d16h │ 100% 1d16h │ 2% 4h48m  │
+│ max5x   │ ·                 │ 11% 6d12h │ 5% 6d12h   │ 87% 2h28m │
+└─────────┴───────────────────┴───────────┴────────────┴───────────┘
+```
+
+`--table` is a **format**, not an account selector: on its own it renders just
+the current account (one row); combine it with `--all` for every account.
+Columns are the **union** across accounts (`ACCOUNT`, then `SPEND` only if some
+account has a cap, `7D`, one per scoped model, `5H`); a metric an account lacks
+shows a dim `·`. Each cell is a percent **plus its own reset countdown**, tinted
+by the same thresholds as the bars and honouring the same reset toggles
+(`--show-limit-resets`, `--show-reset`, `--reset-prefix`, `--no-color`). Borders
+are on by default — drop them with **`--no-borders`**.
+
+Division of labour: `claude-profile` owns the credentials and hands back each
+account's usage (**refreshing a parked account's token** when needed, which a
+Keychain-reading consumer couldn't do); `claude-usage` only renders. An account
+whose token can't be obtained — e.g. the *live* account when its token is
+idle-expired, which only a Claude Code session refreshes — shows
+`(usage unavailable)` rather than dropping out.
+
 ## Caching
 
 Per account, under `$TMPDIR` (the cache file is derived from the config dir, so
