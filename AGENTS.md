@@ -28,6 +28,11 @@ executed — there is no binary on `PATH`.
 - `claude-usage` — arg parsing, theme resolution, cache freshness, and the four
   output renderers (`pretty` / `text` / `json` / `raw`), each a jq program.
 
+The single-account core is **profile-agnostic** — it knows nothing about the
+companion `claude-profile` tool; callers wanting another seat pass `--dir`. The
+one deliberate bridge is the **opt-in `--all`** mode (see below), which engages
+only when the user asks for it and `claude-profile` is installed.
+
 ## Key models to preserve
 
 - **Stale-while-revalidate cache**, one file per account under `$TMPDIR`
@@ -82,6 +87,45 @@ executed — there is no binary on `PATH`.
   jq programs. The canonical theme-name list is the `all_themes` array (feeds
   `--list-themes`, the `--themes` preview — which recursively renders once per
   theme — and the unknown-theme error); keep it in sync with the `case` table.
+
+- **`--all` (opt-in multi-account bridge)**: renders one labelled line per
+  `claude-profile` account. Gated on `command -v claude-profile`; errors cleanly
+  if absent. It shells to `claude-profile usage-json --all`, which emits
+  `<account>\t<compact-raw-json>` per line (empty json field = unavailable —
+  e.g. a live account whose token is idle-expired, which only Claude Code can
+  refresh). Each account's JSON is fed back through **this same renderer** via
+  the internal **`--cache-file PATH`** flag (render a file directly, skip
+  fetch/cache), so every theme/flag applies per account — recursion mirrors the
+  `--themes` preview. `--json`/`--raw` emit a valid `[{account, usage}]` array
+  (gaps → `usage:null`) instead of prefixed lines. Division of labour: the
+  credential + parked-token-refresh lives in `claude-profile` (it owns the
+  secrets); `claude-usage` only ever renders. The NDJSON contract requires
+  **one physical line per account** — `usage-json`'s compact `json.dumps`
+  guarantees it; don't emit pretty-printed JSON there.
+- **`--table` (aligned named-column grid)**: a **format**, orthogonal to account
+  selection — bare it renders the single resolved account (one row, labelled by
+  the config-dir basename); `--all --table` renders every account. Fixes the
+  raggedness of the free-form lines (a `$`-cap segment on one account shifts
+  everything). Columns = the *union* across accounts (`ACCOUNT`, optional
+  `SPEND`, `7D`, one per scoped model, `5H`); a metric an account lacks is a dim
+  `·`. Each cell is a **percent + its own reset countdown** (dimmed,
+  `--reset-prefix` label), mirroring the bars and gated by the same
+  `--show-limit-resets` / `--show-reset` / `--show-spend-reset` toggles. **Box
+  borders by default; `--no-borders` drops them.** Both `--table` and
+  `--all --table` share `_claude_usage_render_table` (a jq program reading
+  {account, usage-summary} NDJSON on stdin; it reads the caller's resolved theme
+  + toggle locals via zsh **dynamic scope**, so nothing is threaded as args).
+  Built from each account's `--json` summary (structured data, not the rendered
+  line). Implementation notes:
+  - Alignment is on the **visible** width — padding computed from the uncoloured
+    cell text so ANSI never skews columns; each cell carries a `{plain, rich}`
+    pair for exactly this.
+  - `spend_reset` is computed **before** the `--all` block (which runs before the
+    cache section) so the all-accounts table can label the `$` column.
+  - jq truthiness: `0` is **truthy** in jq (only `false`/`null` are falsy) — the
+    `$borders` flag is passed as `1`/`0` and tested `== 1`, not bare.
+  - zsh gotcha: don't re-`local` a name already declared in theme resolution
+    (`_a`/`_b`) — a redeclare echoes `name=''` to stdout.
 
 ## Testing
 
