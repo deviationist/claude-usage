@@ -116,6 +116,10 @@ only when the user asks for it and `claude-profile` is installed.
   `claude-profile` is a *zsh function*, and the statusline renders in a bare
   `zsh -c` that sources no zshrc. `_claude_usage_profile_have` is the single
   probe both this and `--all` gate on. `--label STR` bypasses the lookup.
+  The label is followed by `--label-sep` / `CLAUDE_USAGE_LABEL_SEP`, defaulting
+  to the *resolved metric* separator (so `--sep` carries into it) and dimmed
+  together with the label as one span — a bare space made the label read as
+  part of the first metric.
 - **`--all` (opt-in multi-account bridge)**: renders one labelled line per
   `claude-profile` account. Gated on `_claude_usage_profile_have`; errors cleanly
   if absent. It shells to `claude-profile usage-json --all`, which emits
