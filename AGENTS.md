@@ -109,7 +109,12 @@ only when the user asks for it and `claude-profile` is installed.
   miss, so it's stored as a single-space sentinel — non-empty, hence the long
   TTL — and mapped back to "" on read by `_claude_usage_label_read`. The
   resolver's exit code is what separates the two: 0 = answered, 1 = couldn't
-  reach it. Three
+  reach it. Fourth invalidator, beyond the two TTLs and the uuid in the
+  filename: the sidecar is stale if claude-profile's **config is newer** than
+  it (a rename or a new `display` moves nothing else). That's one `zstat`, no
+  fork, and the path comes from `$CLAUDE_PROFILE_CONFIG` — the same variable
+  claude-profile honours, so the two can't drift apart. It's the one place this
+  repo knows anything about the juggler's on-disk layout; keep it to this. Three
   invocation candidates, in order — `$CLAUDE_PROFILE_SCRIPT` (authoritative:
   set-but-missing means "not installed"), a `claude-profile` function/binary,
   then a sibling `../claude-profile/claude-profile.py`. That last one matters:
