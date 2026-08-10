@@ -296,6 +296,20 @@ _claude_usage_label_cached() {
     [[ -s $sidecar ]] || ttl=$ttl_miss
     mtime=$(zstat +mtime "$sidecar" 2>/dev/null) || mtime=0
     (( $(date +%s) - mtime <= ttl )) && fresh=1
+    # …but a config edit beats the clock. Renaming a profile or adding a
+    # `display` changes neither the dir nor the account, so it moves nothing in
+    # the sidecar's cache key and would otherwise sit unnoticed for the full
+    # ttl — a baffling 15 minutes of "I changed it, why is it the same?".
+    # One zstat, no fork. $CLAUDE_PROFILE_CONFIG is the same knob
+    # claude-profile itself honours, so the two can't disagree on the path.
+    if (( fresh )); then
+      local pcfg="${CLAUDE_PROFILE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/claude-profile/config.json}"
+      if [[ -f $pcfg ]]; then
+        local cmtime
+        cmtime=$(zstat +mtime "$pcfg" 2>/dev/null) || cmtime=0
+        (( cmtime > mtime )) && fresh=0
+      fi
+    fi
   fi
   if (( fresh )); then
     _claude_usage_label_read "$sidecar"
