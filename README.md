@@ -213,7 +213,7 @@ four sane outcomes:
 | Setup | Renders |
 |---|---|
 | No `claude-profile` | Unchanged output (flag is a no-op) |
-| One profile, one subscription | `Personal` — no parentheses |
+| One profile, one subscription | *nothing* — no label can disambiguate one seat |
 | One profile, several subscriptions | `Max 20x` — the profile name is a constant |
 | Profiles chosen by folder path | Follows the session's config dir |
 | Several serial accounts | `Personal (Max 20x)`, flipping on swap |
@@ -225,7 +225,9 @@ invalidates it for free; `CLAUDE_USAGE_LABEL_TTL` (default 900 s) covers
 changes that move neither dir nor account, such as a `claude-profile use`
 toggle. A cached *empty* label expires far sooner
 (`CLAUDE_USAGE_LABEL_TTL_MISS`, 60 s), so a transient failure can't hide the
-label for a quarter of an hour. Under `--no-block` the sidecar is never filled
+label for a quarter of an hour. An *answer* of "no label" is not a miss — it's
+cached like any other answer, so a machine with nothing to disambiguate isn't
+re-asking every minute forever. Under `--no-block` the sidecar is never filled
 synchronously — a cold cache renders one repaint without the label and
 refreshes in the background.
 

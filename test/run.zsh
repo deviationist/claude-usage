@@ -501,6 +501,24 @@ hasnot "fresh empty label is honoured" \
     "$(claude-usage --dir $profmiss --text-only --show-profile)" "Personal"
 unfunction claude-profile
 
+# "claude-profile answered, but there is nothing to disambiguate" is an ANSWER,
+# not a failure: it must be cached with the full ttl, or a single-profile
+# single-account machine re-forks python every minute forever.
+profnone2=$(seed profnone2 "$RL")
+nonefile="$TMPDIR/claude-oauth-usage.profnone2.json.label"
+claude-profile() { print -r -- '{"schema":1,"active":true,"profile":"personal","label":""}'; }
+eq "empty answer renders nothing" \
+   "$(claude-usage --dir $profnone2 --text-only --show-profile)" \
+   "$(claude-usage --dir $profnone2 --text-only)"
+eq "empty answer stored as sentinel, not as a miss" "$(wc -c < $nonefile | tr -d ' ')" "1"
+unfunction claude-profile
+# …and with claude-profile now unreachable, the sentinel still serves (it is a
+# real answer on the long ttl, unlike an empty file on the short one).
+eq "sentinel survives on the long ttl" \
+   "$(CLAUDE_PROFILE_SCRIPT=/nonexistent/x.py CLAUDE_USAGE_LABEL_TTL_MISS=-1 \
+      claude-usage --dir $profnone2 --text-only --show-profile)" \
+   "$(claude-usage --dir $profnone2 --text-only)"
+
 # Every "no label" outcome is ordinary: render the usage, say nothing on stderr.
 profoff=$(seed profoff "$RL")
 claude-profile() { print -r -- '{"schema":1,"active":false}'; }
