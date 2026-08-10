@@ -40,6 +40,10 @@
 #                                             # text, " | " pretty)
 #           claude-usage --sep ' / '          # custom metric delimiter (both modes)
 #           claude-usage --dir PATH           # another account's Claude config dir
+#           claude-usage --show-profile       # prefix the seat label, e.g.
+#                                             # "Personal (Max 5x)" — opt-in,
+#                                             # asks claude-profile once and
+#                                             # caches (see --show-profile below)
 #           claude-usage --all                # one labelled line per account,
 #                                             # across every claude-profile
 #                                             # profile/serial account (opt-in
@@ -163,6 +167,11 @@
 # Version, printed by `claude-usage --version`. Bump on release + tag.
 typeset -g CLAUDE_USAGE_VERSION="0.5.0"
 
+# Where this file lives, captured at SOURCE time ($0 inside a function is the
+# function name, not the script). Used to find a sibling claude-profile clone
+# for the opt-in --show-profile bridge.
+typeset -g CLAUDE_USAGE_SELF_DIR="${${(%):-%x}:A:h}"
+
 # The API reports credits worth $0.01 — divide by 100 for dollars.
 export CLAUDE_USAGE_DIVISOR="${CLAUDE_USAGE_DIVISOR:-100}"
 
@@ -193,6 +202,117 @@ _claude_usage_cache_path() {
   acct=$(jq -r '.oauthAccount.accountUuid // empty' "$cj" 2>/dev/null)
   [[ -n "$acct" ]] && suffix=".${acct:0:8}"
   print -r -- "${TMPDIR:-/tmp}/claude-oauth-usage.${dir:t}${suffix}.json"
+}
+
+# ----------------------------------------------------------------------------
+# Internal: resolve this seat's display label ("Personal (Max 5x)") — the
+# OPT-IN --show-profile bridge to the companion `claude-profile` juggler.
+#   $1 = config dir
+# Prints the label (possibly empty) and returns 0; never errors, never writes
+# to stderr. "No label" is an ordinary outcome, not a failure: no juggler
+# installed, no config file, or a dir no profile claims.
+#
+# claude-profile owns the STRING — we ask by config dir (not cwd: the
+# statusline knows which dir a session belongs to but has no meaningful cwd)
+# and render what comes back verbatim. One call, JSON, no parsing of its
+# internals.
+# ----------------------------------------------------------------------------
+_claude_usage_label_resolve() {
+  local dir="${1%/}" out
+  out=$(_claude_usage_profile_cmd resolve --json --dir "$dir" 2>/dev/null) || return 0
+  [[ -n $out ]] || return 0
+  jq -r 'if (.active // false) then (.label // "") else "" end' <<< "$out" 2>/dev/null
+}
+
+# ----------------------------------------------------------------------------
+# Internal: invoke claude-profile, wherever it lives. Mirrors how
+# claude-statusline locates THIS script — because the same problem bites here:
+# `claude-profile` is a zsh FUNCTION in an interactive shell, and the
+# statusline renders in a bare `zsh -c` that sources no zshrc, so the function
+# doesn't exist on the very path that needs it most. Order:
+#   $CLAUDE_PROFILE_SCRIPT override → function/binary on PATH → sibling clone.
+# Prints nothing and returns 1 when claude-profile isn't installed at all.
+# ----------------------------------------------------------------------------
+_claude_usage_profile_cmd() {
+  if [[ -n ${CLAUDE_PROFILE_SCRIPT:-} ]]; then
+    [[ -f $CLAUDE_PROFILE_SCRIPT ]] || return 1
+    command python3 "$CLAUDE_PROFILE_SCRIPT" "$@"
+    return $?
+  fi
+  if command -v claude-profile >/dev/null 2>&1; then
+    claude-profile "$@"
+    return $?
+  fi
+  local sibling="$CLAUDE_USAGE_SELF_DIR/../claude-profile/claude-profile.py"
+  [[ -f $sibling ]] || return 1
+  command python3 "$sibling" "$@"
+}
+
+# Is claude-profile reachable at all? Same three candidates, in the same
+# order, so the --all gate and the label lookup can never disagree about
+# whether the juggler exists. An explicit $CLAUDE_PROFILE_SCRIPT is
+# authoritative: if the user says where it lives and it isn't there, it isn't
+# installed — the other candidates aren't consulted (that's also how a test
+# suite proves the not-installed path on a machine that has a sibling clone).
+_claude_usage_profile_have() {
+  if [[ -n ${CLAUDE_PROFILE_SCRIPT:-} ]]; then
+    [[ -f $CLAUDE_PROFILE_SCRIPT ]]
+    return $?
+  fi
+  command -v claude-profile >/dev/null 2>&1 && return 0
+  [[ -f "$CLAUDE_USAGE_SELF_DIR/../claude-profile/claude-profile.py" ]]
+}
+
+# ----------------------------------------------------------------------------
+# Internal: cached label lookup. The resolver shells out to python (~100ms) —
+# far too slow for a statusline that repaints on every message — so the answer
+# is cached in a sidecar next to the usage cache. That filename already embeds
+# the config dir AND the first 8 of accountUuid, so a serial account swap
+# lands on a different sidecar and invalidates itself for free; the TTL only
+# has to cover changes that move neither (a `claude-profile use` toggle, an
+# edited path rule).
+#   $1 = config dir   $2 = cache path   $3 = 1 when non-blocking (statusline)
+# An EMPTY label is cached too — that's what stops a machine without
+# claude-profile from paying the probe + fork on every repaint — but on a much
+# SHORTER ttl. A miss is the answer we least want to be stuck with: a transient
+# one (claude-profile mid-swap, a run with the bridge disabled, a lost race on
+# first start) would otherwise hide the label for the full 15 minutes. Cheap
+# retries on nothing, long life for a real answer.
+# ----------------------------------------------------------------------------
+_claude_usage_label_cached() {
+  local dir="$1" cache="$2" noblock="${3:-0}"
+  local sidecar="$cache.label"
+  local ttl="${CLAUDE_USAGE_LABEL_TTL:-900}"
+  local ttl_miss="${CLAUDE_USAGE_LABEL_TTL_MISS:-60}"
+  local mtime=0 fresh=0
+  if [[ -f $sidecar ]]; then
+    [[ -s $sidecar ]] || ttl=$ttl_miss
+    mtime=$(zstat +mtime "$sidecar" 2>/dev/null) || mtime=0
+    (( $(date +%s) - mtime <= ttl )) && fresh=1
+  fi
+  if (( fresh )); then
+    print -r -- "$(<"$sidecar")"
+    return 0
+  fi
+  if (( noblock )); then
+    # Statusline: never block on python. Serve the stale label if we have one
+    # (a seat's name is stable — a stale name beats a flickering gap), and
+    # refresh detached so the next repaint is current.
+    ( _claude_usage_label_write "$dir" "$sidecar" & ) >/dev/null 2>&1
+    [[ -f $sidecar ]] && print -r -- "$(<"$sidecar")"
+    return 0
+  fi
+  _claude_usage_label_write "$dir" "$sidecar"
+}
+
+# Resolve and atomically install the sidecar, then print the label.
+_claude_usage_label_write() {
+  local dir="$1" sidecar="$2" label tmp
+  label=$(_claude_usage_label_resolve "$dir")
+  tmp="$sidecar.$$"
+  print -rn -- "$label" > "$tmp" 2>/dev/null && mv -f "$tmp" "$sidecar" 2>/dev/null
+  rm -f "$tmp" 2>/dev/null
+  print -r -- "$label"
 }
 
 # ----------------------------------------------------------------------------
@@ -455,7 +575,11 @@ claude-usage() {
   # --all: render every claude-profile account (opt-in bridge, see below).
   # --cache-file: internal — render a specific JSON file, skipping fetch/cache
   # (how --all feeds each account's raw response back through the renderer).
-  local allmode=0 table=0 borders=1 cache_file_override=""
+  # --label: render this exact seat label instead of asking claude-profile.
+  # How --all hands each child render its account's label (the child sees a
+  # --cache-file belonging to a DIFFERENT account, so it must not resolve one
+  # itself); doubles as the manual escape hatch for anyone without the juggler.
+  local allmode=0 table=0 borders=1 cache_file_override="" label_override=""
   # Theme-glyph progress bars inside --table cells (on by default). --no-bars
   # (or CLAUDE_USAGE_TABLE_BARS=false) falls back to the bare numeric grid.
   local table_bars="${CLAUDE_USAGE_TABLE_BARS:-true}"
@@ -469,6 +593,11 @@ claude-usage() {
   # Per-window reset countdowns on the non-session limits (7d / model), from
   # each limit's resets_at. The 5h window keeps its trailing countdown.
   local show_limit_resets="${CLAUDE_USAGE_SHOW_LIMIT_RESETS:-true}"
+  # Seat label ("Personal (Max 5x)") in front of the bars — which subscription
+  # am I burning? OPT-IN and default FALSE: it's the one feature that shells
+  # out to another tool, and with it off claude-profile is never invoked and
+  # the output is byte-identical to a build without this code.
+  local show_profile="${CLAUDE_USAGE_SHOW_PROFILE:-false}"
   # Prefix put before EVERY window countdown (trailing 5h one included), so
   # all resets render in one style. Default "" (compact: "14m", "3d21h");
   # e.g. --reset-prefix "Reset " labels them all.
@@ -535,6 +664,10 @@ claude-usage() {
       --show-spend-reset=*)
         show_spend_reset="${1#--show-spend-reset=}"
         [[ $show_spend_reset == (true|false) ]] || { print -u2 "claude-usage: --show-spend-reset takes true or false"; return 1 } ;;
+      --show-profile)     show_profile=true ;;
+      --show-profile=*)
+        show_profile="${1#--show-profile=}"
+        [[ $show_profile == (true|false) ]] || { print -u2 "claude-usage: --show-profile takes true or false"; return 1 } ;;
       --show-limit-resets) show_limit_resets=true ;;
       --show-limit-resets=*)
         show_limit_resets="${1#--show-limit-resets=}"
@@ -578,6 +711,10 @@ claude-usage() {
         [[ -n "${2+x}" ]] || { print -u2 "claude-usage: --cache-file requires a path"; return 1 }
         cache_file_override="$2"; shift ;;
       --cache-file=*) cache_file_override="${1#--cache-file=}" ;;
+      --label)
+        [[ -n "${2+x}" ]] || { print -u2 "claude-usage: --label requires a value"; return 1 }
+        label_override="$2"; shift ;;
+      --label=*)  label_override="${1#--label=}" ;;
       --version|-V) print "claude-usage $CLAUDE_USAGE_VERSION"; return 0 ;;
       --fresh)      force=1 ;;
       --no-block)   noblock=1 ;;
@@ -586,11 +723,11 @@ claude-usage() {
         dir="$2"; shift ;;
       --dir=*)    dir="${1#--dir=}" ;;
       -h|--help)
-        print "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--no-bars] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--fresh|--no-block] [--version]"
+        print "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--no-bars] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--show-profile=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--fresh|--no-block] [--version]"
         print "themes: ${(j: :)all_themes}  (--list-themes to script it, --themes to preview)"
         return 0 ;;
       *)
-        print -u2 "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--no-bars] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--fresh|--no-block]"
+        print -u2 "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--no-bars] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--show-profile=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--fresh|--no-block]"
         return 1 ;;
     esac
     shift
@@ -600,6 +737,7 @@ claude-usage() {
   [[ $show_spend        == (true|false) ]] || show_spend=true
   [[ $show_balance      == (true|false) ]] || show_balance=true
   [[ $show_limit_resets == (true|false) ]] || show_limit_resets=true
+  [[ $show_profile      == (true|false) ]] || show_profile=false
 
   # ---- --themes: preview — render the current usage once per theme ---------
   if [[ $mode == themes ]]; then
@@ -745,7 +883,7 @@ claude-usage() {
   #             cap that's live (credits enabled) OR carries real spend — the
   #             pretty spend_on gate — which is exactly the raggedness a table fixes.
   if (( allmode )); then
-    command -v claude-profile >/dev/null 2>&1 || {
+    _claude_usage_profile_have || {
       print -u2 "claude-usage: --all needs the companion 'claude-profile' tool (not found)"
       return 1
     }
@@ -756,10 +894,26 @@ claude-usage() {
       _fwd+=("$_arg")
     done
     local _nd
-    _nd="$(claude-profile usage-json --all 2>/dev/null)"
+    _nd="$(_claude_usage_profile_cmd usage-json --all 2>/dev/null)"
     [[ -n $_nd ]] || { print -u2 "claude-usage: claude-profile reported no accounts"; return 1 }
     local -a _lines=("${(@f)_nd}")
     local _l _name _json _tmpf
+
+    # With --show-profile, each row is named by its seat label ("Personal
+    # (Max 20x)") rather than the bare account key. ONE extra call buys the
+    # whole account→label map — the same `resolve --json` contract, with
+    # --accounts. An older claude-profile without it just yields nothing here
+    # and every row keeps its account name.
+    local -A _labels
+    if [[ $show_profile == true ]]; then
+      local _map _ml
+      _map="$(_claude_usage_profile_cmd resolve --json --accounts 2>/dev/null \
+              | jq -r 'if (.active // false) then ((.accounts // [])[] | "\(.name)\t\(.label)") else empty end' 2>/dev/null)"
+      for _ml in "${(@f)_map}"; do
+        [[ -n $_ml && $_ml == *$'\t'* ]] || continue
+        _labels[${_ml%%$'\t'*}]="${_ml#*$'\t'}"
+      done
+    fi
 
     if (( table )) || [[ $mode == (json|raw) ]]; then
       # Collect structured {account, usage}. --table needs the --json SUMMARY
@@ -779,7 +933,17 @@ claude-usage() {
           fi
           rm -f "$_tmpf"
         fi
-        _items+=("$(jq -n --arg n "$_name" --argjson u "${_child:-null}" '{account:$n, usage:$u}')")
+        # --table renders the `account` field, so the label takes its place
+        # there; --json keeps the raw account key stable for scripts and adds
+        # `label` alongside it (only when the feature is on).
+        if (( table )); then
+          _items+=("$(jq -n --arg n "${_labels[$_name]:-$_name}" --argjson u "${_child:-null}" \
+                        '{account:$n, usage:$u}')")
+        else
+          _items+=("$(jq -n --arg n "$_name" --arg lbl "${_labels[$_name]:-}" \
+                        --argjson u "${_child:-null}" \
+                        '{account:$n} + (if $lbl != "" then {label:$lbl} else {} end) + {usage:$u}')")
+        fi
       done
       if (( ! table )); then
         printf '%s\n' "${_items[@]}" | jq -s '.'
@@ -793,13 +957,18 @@ claude-usage() {
       return 0
     fi
 
-    # Default --all: one labelled, fully-rendered line per account.
-    local _w=0
-    for _l in "${_lines[@]}"; do _name="${_l%%$'\t'*}"; (( ${#_name} > _w )) && _w=${#_name}; done
+    # Default --all: one labelled, fully-rendered line per account. The line's
+    # own prefix column IS the label here, so the child render must not add a
+    # second one — it can't anyway, since --cache-file suppresses resolution.
+    local _w=0 _rowname
+    for _l in "${_lines[@]}"; do
+      _name="${_l%%$'\t'*}"; _rowname="${_labels[$_name]:-$_name}"
+      (( ${#_rowname} > _w )) && _w=${#_rowname}
+    done
     for _l in "${_lines[@]}"; do
       [[ -n $_l ]] || continue
       _name="${_l%%$'\t'*}"; _json="${_l#*$'\t'}"
-      printf '%-*s  ' "$_w" "$_name"
+      printf '%-*s  ' "$_w" "${_labels[$_name]:-$_name}"
       if [[ -z $_json ]]; then
         print -r -- "(usage unavailable)"
       else
@@ -866,6 +1035,19 @@ claude-usage() {
   if (( gsep_set )); then text_gsep="$gsep_override"; pretty_gsep="$gsep_override"
   else text_gsep=" || "; pretty_gsep=" | "; fi
 
+  # ---- Seat label (opt-in): "Personal (Max 5x)" ahead of the bars ----------
+  # Which subscription am I burning? Resolved from claude-profile, cached in a
+  # sidecar so a repainting statusline pays nothing (see _claude_usage_label_*).
+  # An explicit --label wins and skips the lookup entirely; a --cache-file
+  # render never resolves one, because the JSON it was handed belongs to some
+  # OTHER account (that path is --all, which passes --label per child).
+  local label=""
+  if [[ -n $label_override ]]; then
+    label="$label_override"
+  elif [[ $show_profile == true && -z $cache_file_override ]]; then
+    label=$(_claude_usage_label_cached "$dir" "$cache" "$noblock")
+  fi
+
   # ---- --table (single account): one row, same named-column grid as --all ---
   # `--table` is a FORMAT, orthogonal to account selection: bare it renders just
   # this account (labelled by its config-dir basename); `--all --table` renders
@@ -875,10 +1057,23 @@ claude-usage() {
     local _sum _lbl
     _sum="$(claude-usage --cache-file "$cache" --json)"
     [[ -n $_sum ]] || _sum=null
+    # The seat label names the account better than the dir basename ever could
+    # ("Personal (Max 5x)" vs "claude-personal"), so it wins the ACCOUNT cell.
     _lbl="${dir:t}"; _lbl="${_lbl#.}"                 # "~/.claude" → "claude"
+    [[ -n $label ]] && _lbl="$label"
     jq -n --arg n "$_lbl" --argjson u "$_sum" '{account:$n, usage:$u}' \
       | _claude_usage_render_table
     return 0
+  fi
+
+  # Rendered form of the label: plain in --text-only, dimmed in --pretty (it
+  # identifies the seat, it isn't a metric), always space-terminated. Empty
+  # label → empty prefix → byte-identical output to a build without it.
+  local text_lblpfx="" pretty_lblpfx=""
+  if [[ -n $label ]]; then
+    text_lblpfx="$label "
+    if [[ -n $dim ]]; then pretty_lblpfx=$'\e['"${dim}m${label}"$'\e[0m '
+    else pretty_lblpfx="$label " ; fi
   fi
 
   case $mode in
@@ -939,7 +1134,7 @@ claude-usage() {
             --argjson showlr "$show_limit_resets" --arg rpfx "$reset_prefix" \
             --arg sppfx "$spend_prefix" --arg limpfx "$limits_prefix" \
             --arg spendreset "$spend_reset" --arg sep "$text_sep" \
-            --arg gsep "$text_gsep" '
+            --arg gsep "$text_gsep" --arg lblpfx "$text_lblpfx" '
         def money:
           if type == "object" then (.amount_minor // 0) / pow(10; (.exponent // 2))
           elif type == "number" then .
@@ -1002,7 +1197,8 @@ claude-usage() {
           (.spend.balance // null) as $b
           | if $b == null then "" else "bal $\($b | money | fmt2)" end;
 
-        (
+        # Seat label from claude-profile; "" when off (see the pretty renderer).
+        $lblpfx + (
           (spend_line) as $sp |
           (balance_line) as $bal |
           ((if ($bal != "" and $showbal) then [$bal] else [] end)) as $balseg |
@@ -1058,7 +1254,8 @@ claude-usage() {
             --arg clo "$clo" --arg cmid "$cmid" --arg chi "$chi" \
             --argjson tmid "$tmid" --argjson thi "$thi" \
             --arg gfull "$gfull" --arg gpartial "$gpartial" --arg gempty "$gempty" \
-            --arg lbr "$lbr" --arg rbr "$rbr" --arg dim "$dim" '
+            --arg lbr "$lbr" --arg rbr "$rbr" --arg dim "$dim" \
+            --arg lblpfx "$pretty_lblpfx" '
         def money:
           if type == "object" then (.amount_minor // 0) / pow(10; (.exponent // 2))
           elif type == "number" then .
@@ -1144,7 +1341,10 @@ claude-usage() {
         # Optional section prefix, dimmed; "" stays "" (no stray SGR bytes)
         def secpfx($p): if $p != "" then paint($dim; $p) else "" end;
 
-        (
+        # $lblpfx: the seat label from claude-profile ("Personal (Max 5x) "),
+        # already dimmed and space-terminated by the caller; "" when the
+        # feature is off — so the rendered line is byte-identical to before.
+        $lblpfx + (
           (spend_bar) as $sp |
           (balance_seg) as $bal |
           ((if ($bal != "" and $showbal) then [$bal] else [] end)) as $balseg |

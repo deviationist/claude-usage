@@ -81,6 +81,9 @@ claude-usage --fresh                  # blocking refresh, guaranteed current
 claude-usage --no-block               # statusline mode: never blocks, silent on cold/broken state
 claude-usage --dir PATH               # another account's Claude config dir
 claude-usage --sep ' / '              # custom metric delimiter (both modes)
+claude-usage --show-profile           # prefix the seat label, e.g. "Personal (Max 5x)"
+                                      # (opt-in; needs claude-profile — see below)
+claude-usage --label 'Work'           # set that label yourself, no claude-profile
 claude-usage --show-reset=false       # drop the 5h reset countdown
 claude-usage --show-spend=false       # hide the monthly $-cap segment (combined view)
 claude-usage --show-balance=false     # hide the credit-balance segment
@@ -171,6 +174,66 @@ the Keychain service is namespaced per config dir
 freshest non-expired token across all sources wins. Nothing is ever written to
 those stores — `claude-usage` only reads the token Claude Code already keeps
 locally, and talks only to the standard Anthropic API host.
+
+## Which seat is this? (`--show-profile`)
+
+The bars tell you how much is left; they don't tell you *whose*. With
+`--show-profile` the line is prefixed with a seat label — useful the moment a
+machine has more than one subscription, and the reason this exists at all:
+
+```console
+$ claude-usage --show-profile
+Personal (Max 5x) 7d▕░░░░░░░░░░▏0% 4d20h · Fable▕░░░░░░░░░░▏0% · 5h▕▌░░░░░░░░░▏5% 1h15m
+```
+
+In a statusline it lands next to the bars it qualifies:
+
+```
+~/.zsh/claude-usage [main] | Opus 5 | ctx:12% | Personal (Max 5x) 7d▕░░░░░░░░░░▏0% · 5h▕▌░░░░░░░░░▏5% 1h15m
+```
+
+**The label is claude-profile's to compose, not ours.** `claude-usage` asks
+one question — `claude-profile resolve --json --dir <config dir>` — and renders
+the `label` it gets back verbatim. Casing and spacing come from that config
+(`display` per profile, `account_display` per account), never from a
+title-casing heuristic here, and the account only appears in parentheses when
+the profile actually holds more than one.
+
+Note it asks **by config dir**, not by cwd: a statusline knows which account a
+session belongs to but has no meaningful working directory, so cwd-based
+resolution would name the wrong profile.
+
+**Opt-in, and silent when there's nothing to say.** Default off; with it off,
+claude-profile is never invoked and the output is byte-identical. With it on,
+every "no label" case — no claude-profile installed, no config file, a dir no
+profile claims, an older claude-profile without the `--json` porcelain —
+renders the usage exactly as before and says nothing on stderr. Four setups,
+four sane outcomes:
+
+| Setup | Renders |
+|---|---|
+| No `claude-profile` | Unchanged output (flag is a no-op) |
+| One profile, one subscription | `Personal` — no parentheses |
+| Profiles chosen by folder path | Follows the session's config dir |
+| Several serial accounts | `Personal (Max 20x)`, flipping on swap |
+
+**It costs a repainting statusline nothing.** The lookup shells out to python
+(~100 ms), so the answer is cached in a `<cache>.label` sidecar next to the
+usage cache. That filename already embeds the account's uuid, so a serial swap
+invalidates it for free; `CLAUDE_USAGE_LABEL_TTL` (default 900 s) covers
+changes that move neither dir nor account, such as a `claude-profile use`
+toggle. A cached *empty* label expires far sooner
+(`CLAUDE_USAGE_LABEL_TTL_MISS`, 60 s), so a transient failure can't hide the
+label for a quarter of an hour. Under `--no-block` the sidecar is never filled
+synchronously — a cold cache renders one repaint without the label and
+refreshes in the background.
+
+`--label STR` sets the string yourself and skips the lookup entirely, for
+anyone who wants the prefix without the juggler.
+
+`--table` puts the label in the `ACCOUNT` cell, where it beats the config
+dir's basename (`Personal (Max 5x)` vs `claude-personal`), and `--all` names
+every row the same way — see below.
 
 ## Multiple accounts (`--all`)
 
@@ -263,6 +326,10 @@ process env.
 | `CLAUDE_USAGE_SHOW_BALANCE` | `true` | Default for `--show-balance` (credit-balance segment, when the API reports one). |
 | `CLAUDE_USAGE_SHOW_SPEND_RESET` | `true` | Default for `--show-spend-reset` (monthly-cap reset date, derived locally). |
 | `CLAUDE_USAGE_SHOW_LIMIT_RESETS` | `true` | Default for `--show-limit-resets` (7d/model per-window reset countdowns). |
+| `CLAUDE_USAGE_SHOW_PROFILE` | `false` | Default for `--show-profile` (seat label from claude-profile, e.g. `Personal (Max 5x)`). |
+| `CLAUDE_USAGE_LABEL_TTL` | `900` | Max age (seconds) of the cached seat label before it's re-resolved. |
+| `CLAUDE_USAGE_LABEL_TTL_MISS` | `60` | Same, for a cached *empty* label — short, so a transient failure can't hide the label for the full TTL. |
+| `CLAUDE_PROFILE_SCRIPT` | unset | Explicit path to `claude-profile.py` for the `--show-profile` / `--all` bridge. Authoritative: if set and missing, claude-profile counts as not installed. |
 | `CLAUDE_USAGE_GROUP_SEP` | per-mode | Separator between the dollar group and the plan limits (`" \|\| "` text, `" \| "` pretty by default). |
 | `CLAUDE_USAGE_RESET_PREFIX` | `""` | Default for `--reset-prefix` — label put before every reset: window countdowns and the monthly-cap date (e.g. `"Reset "`). |
 | `CLAUDE_USAGE_SPEND_PREFIX` | `""` | Default for `--spend-prefix` — label before the dollar group (e.g. `"Credit: "`; dimmed in pretty). |
