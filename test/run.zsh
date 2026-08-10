@@ -339,8 +339,11 @@ claude-usage --cache-file "$tmp/does-not-exist.json" >/dev/null 2>&1
 (( $? == 1 )) && ok "cache-file missing → rc 1" || bad "cache-file missing → rc 1" "rc=$?"
 
 # ---- --all: opt-in bridge to claude-profile -------------------------------
-# With no claude-profile on PATH/as a function, --all must fail cleanly.
-claude-usage --all >/dev/null 2>&1
+# With no claude-profile anywhere — not a function, not on PATH, and no
+# sibling clone — --all must fail cleanly. An explicit CLAUDE_PROFILE_SCRIPT
+# pointing at nothing is the authoritative "not installed" signal, so this
+# holds on a dev machine that DOES have a sibling clone checked out.
+CLAUDE_PROFILE_SCRIPT=/nonexistent/claude-profile.py claude-usage --all >/dev/null 2>&1
 (( $? == 1 )) && ok "all without claude-profile → rc 1" || bad "all without claude-profile → rc 1" "rc=$?"
 
 # Stub the companion tool: emit "<account>\t<json>" NDJSON — one healthy
@@ -446,6 +449,97 @@ claude-profile() {
   printf '%s\t%s\n' "off" "$COMBO_OFF"
 }
 hasnot "all table hides dormant cap" "$(claude-usage --all --table --no-borders --no-color)" "SPEND"
+unfunction claude-profile
+
+# ---- --show-profile: opt-in seat label ------------------------------------
+# The label comes from claude-profile's `resolve --json` and is rendered
+# verbatim; claude-usage never composes one. Stub answers that contract.
+prof=$(seed prof "$RL")
+claude-profile() {
+  [[ "$1" == "resolve" ]] || return 0
+  print -r -- '{"schema":1,"active":true,"profile":"personal","label":"Personal (Max 5x)"}'
+}
+
+# OFF by default — with a juggler installed AND answering, output must still
+# be byte-identical to a machine that has none. This is the regression that
+# matters: the feature may not leak into anyone's existing statusline.
+eq "profile off by default (byte-identical)" \
+   "$(claude-usage --dir $prof --text-only)" \
+   "$(CLAUDE_PROFILE_SCRIPT=/nonexistent/x.py claude-usage --dir $prof --text-only)"
+hasnot "profile off → no label" "$(claude-usage --dir $prof --text-only)" "Personal"
+
+has "profile on → label prefix"  "$(claude-usage --dir $prof --text-only --show-profile)" "Personal (Max 5x) 7d"
+has "profile pretty → dimmed"    "$(claude-usage --dir $prof --show-profile)" "${esc}[2mPersonal (Max 5x)${esc}[0m "
+has "profile via env"            "$(CLAUDE_USAGE_SHOW_PROFILE=true claude-usage --dir $prof --text-only)" "Personal (Max 5x)"
+has "profile flag =false wins"   "$(CLAUDE_USAGE_SHOW_PROFILE=true claude-usage --dir $prof --text-only --show-profile=false)" "7d"
+hasnot "profile flag =false → no label" \
+   "$(CLAUDE_USAGE_SHOW_PROFILE=true claude-usage --dir $prof --text-only --show-profile=false)" "Personal"
+has "explicit --label needs no juggler" \
+   "$(CLAUDE_PROFILE_SCRIPT=/nonexistent/x.py claude-usage --dir $prof --text-only --label 'Work')" "Work 7d"
+
+# The lookup shells out to python — cached in a sidecar beside the usage cache
+# so a repainting statusline pays for it once. Serving from that sidecar must
+# not need claude-profile at all.
+eq "profile sidecar written" "$(<"$TMPDIR/claude-oauth-usage.prof.json.label")" "Personal (Max 5x)"
+unfunction claude-profile
+has "profile served from sidecar" \
+   "$(CLAUDE_PROFILE_SCRIPT=/nonexistent/x.py claude-usage --dir $prof --text-only --show-profile)" \
+   "Personal (Max 5x)"
+
+# A cached MISS must expire fast. A transient failure (claude-profile mid-swap,
+# a run with the bridge disabled) would otherwise hide the label for the full
+# label TTL — 15 minutes of "why is it gone?" for a one-second blip.
+profmiss=$(seed profmiss "$RL")
+missfile="$TMPDIR/claude-oauth-usage.profmiss.json.label"
+: > $missfile
+claude-profile() { print -r -- '{"schema":1,"active":true,"label":"Personal (Max 5x)"}'; }
+has "expired empty label re-resolves" \
+    "$(CLAUDE_USAGE_LABEL_TTL_MISS=-1 claude-usage --dir $profmiss --text-only --show-profile)" \
+    "Personal (Max 5x)"
+: > $missfile   # …but a fresh miss is honoured, so repaints don't re-fork
+hasnot "fresh empty label is honoured" \
+    "$(claude-usage --dir $profmiss --text-only --show-profile)" "Personal"
+unfunction claude-profile
+
+# Every "no label" outcome is ordinary: render the usage, say nothing on stderr.
+profoff=$(seed profoff "$RL")
+claude-profile() { print -r -- '{"schema":1,"active":false}'; }
+has    "inactive juggler → usage renders" "$(claude-usage --dir $profoff --text-only --show-profile)" "7d"
+hasnot "inactive juggler → no label"      "$(claude-usage --dir $profoff --text-only --show-profile)" "("
+unfunction claude-profile
+
+profnone=$(seed profnone "$RL")
+has "no juggler → usage renders" \
+    "$(CLAUDE_PROFILE_SCRIPT=/nonexistent/x.py claude-usage --dir $profnone --text-only --show-profile)" "7d"
+eq  "no juggler → silent on stderr" \
+    "$(CLAUDE_PROFILE_SCRIPT=/nonexistent/x.py claude-usage --dir $profnone --text-only --show-profile 2>&1 >/dev/null)" ""
+
+# --table (single account): the label names the seat better than the config
+# dir's basename, so it takes the ACCOUNT cell.
+has "single table uses seat label" \
+    "$(claude-usage --dir $prof --table --no-borders --no-color --show-profile)" "Personal (Max 5x)"
+hasnot "single table without it keeps basename" \
+    "$(claude-usage --dir $prof --table --no-borders --no-color)" "Personal"
+
+# --all: ONE extra call (`resolve --json --accounts`) labels every row.
+claude-profile() {
+  case "$1" in
+    usage-json) printf '%s\t%s\n' "acctA" "$RLC"; printf '%s\t\n' "acctB" ;;
+    resolve)    print -r -- '{"schema":1,"active":true,"accounts":[{"name":"acctA","label":"Personal (Max 20x)"},{"name":"acctB","label":"Work"}]}' ;;
+  esac
+}
+allprof=$(claude-usage --all --show-profile --no-color)
+has "all rows use seat labels"  "$allprof" "Personal (Max 20x)"
+has "all pads to widest label"  "$allprof" "$(printf '%-18s  (usage unavailable)' 'Work')"
+has "all table cell uses label" "$(claude-usage --all --table --no-borders --no-color --show-profile)" "Personal (Max 20x)"
+has "all json keeps account key + adds label" \
+    "$(claude-usage --all --json --show-profile | jq -r '.[0] | "\(.account)/\(.label)"')" "acctA/Personal (Max 20x)"
+# An older claude-profile with no --accounts support: rows keep account names.
+claude-profile() {
+  [[ "$1" == "usage-json" ]] || return 1
+  printf '%s\t%s\n' "acctA" "$RLC"
+}
+has "all degrades to account names" "$(claude-usage --all --show-profile --no-color)" "acctA  "
 unfunction claude-profile
 
 # ---- README SVG generator (smoke; explicit output paths → README untouched) -
