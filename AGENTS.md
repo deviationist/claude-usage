@@ -104,7 +104,12 @@ only when the user asks for it and `claude-profile` is installed.
   empty label is cached too — otherwise a juggler-less machine forks on every
   repaint — but on `CLAUDE_USAGE_LABEL_TTL_MISS` (60 s), because a transient
   miss that stuck for the full TTL would hide the label for 15 minutes.
-  Keep those two TTLs distinct. Three
+  Keep those two TTLs distinct. Third state: claude-profile can ANSWER "no
+  label" (one profile, one account — nothing to disambiguate). That's not a
+  miss, so it's stored as a single-space sentinel — non-empty, hence the long
+  TTL — and mapped back to "" on read by `_claude_usage_label_read`. The
+  resolver's exit code is what separates the two: 0 = answered, 1 = couldn't
+  reach it. Three
   invocation candidates, in order — `$CLAUDE_PROFILE_SCRIPT` (authoritative:
   set-but-missing means "not installed"), a `claude-profile` function/binary,
   then a sibling `../claude-profile/claude-profile.py`. That last one matters:
