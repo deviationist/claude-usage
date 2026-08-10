@@ -219,9 +219,14 @@ _claude_usage_cache_path() {
 # ----------------------------------------------------------------------------
 _claude_usage_label_resolve() {
   local dir="${1%/}" out
-  out=$(_claude_usage_profile_cmd resolve --json --dir "$dir" 2>/dev/null) || return 0
-  [[ -n $out ]] || return 0
+  # rc distinguishes the two empty outcomes: 0 = claude-profile ANSWERED (the
+  # label may legitimately be "" — one profile holding one account has nothing
+  # to disambiguate, and an unclaimed dir is a stable fact); 1 = we couldn't
+  # reach it at all. Only the latter deserves a fast retry.
+  out=$(_claude_usage_profile_cmd resolve --json --dir "$dir" 2>/dev/null) || return 1
+  [[ -n $out ]] || return 1
   jq -r 'if (.active // false) then (.label // "") else "" end' <<< "$out" 2>/dev/null
+  return 0
 }
 
 # ----------------------------------------------------------------------------
@@ -286,12 +291,14 @@ _claude_usage_label_cached() {
   local ttl_miss="${CLAUDE_USAGE_LABEL_TTL_MISS:-60}"
   local mtime=0 fresh=0
   if [[ -f $sidecar ]]; then
+    # Empty file = a failed lookup (short ttl). A file holding the SENTINEL is
+    # an answer of "no label" and lives as long as any other answer.
     [[ -s $sidecar ]] || ttl=$ttl_miss
     mtime=$(zstat +mtime "$sidecar" 2>/dev/null) || mtime=0
     (( $(date +%s) - mtime <= ttl )) && fresh=1
   fi
   if (( fresh )); then
-    print -r -- "$(<"$sidecar")"
+    _claude_usage_label_read "$sidecar"
     return 0
   fi
   if (( noblock )); then
@@ -299,18 +306,31 @@ _claude_usage_label_cached() {
     # (a seat's name is stable — a stale name beats a flickering gap), and
     # refresh detached so the next repaint is current.
     ( _claude_usage_label_write "$dir" "$sidecar" & ) >/dev/null 2>&1
-    [[ -f $sidecar ]] && print -r -- "$(<"$sidecar")"
+    [[ -f $sidecar ]] && _claude_usage_label_read "$sidecar"
     return 0
   fi
   _claude_usage_label_write "$dir" "$sidecar"
 }
 
+# The sidecar's "answered, but there is nothing to show" sentinel: a single
+# space. Distinguishable from a failed lookup (empty file) by `test -s`, and
+# safe because a composed label never carries leading/trailing whitespace.
+_claude_usage_label_read() {
+  local v="$(<"$1")"
+  [[ $v == " " ]] && return 0
+  print -r -- "$v"
+}
+
 # Resolve and atomically install the sidecar, then print the label.
 _claude_usage_label_write() {
-  local dir="$1" sidecar="$2" label tmp
-  label=$(_claude_usage_label_resolve "$dir")
+  local dir="$1" sidecar="$2" label tmp store rc
+  label=$(_claude_usage_label_resolve "$dir"); rc=$?
   tmp="$sidecar.$$"
-  print -rn -- "$label" > "$tmp" 2>/dev/null && mv -f "$tmp" "$sidecar" 2>/dev/null
+  # Store the sentinel when claude-profile answered with no label, so that
+  # answer keeps the full ttl; a failure stores empty and is retried soon.
+  store="$label"
+  (( rc == 0 )) && [[ -z $label ]] && store=" "
+  print -rn -- "$store" > "$tmp" 2>/dev/null && mv -f "$tmp" "$sidecar" 2>/dev/null
   rm -f "$tmp" 2>/dev/null
   print -r -- "$label"
 }
