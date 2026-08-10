@@ -88,8 +88,31 @@ only when the user asks for it and `claude-profile` is installed.
   `--list-themes`, the `--themes` preview — which recursively renders once per
   theme — and the unknown-theme error); keep it in sync with the `case` table.
 
+- **`--show-profile` (opt-in seat label)**: prefixes the line with
+  `"Personal (Max 5x)"` — one call to `claude-profile resolve --json --dir
+  <config dir>`, whose `label` is rendered **verbatim**. Do not compose a label
+  here (no dir-basename guessing, no `.claude.json` tier sniffing, no
+  title-casing): the juggler owns the string, including whether the account
+  belongs in parentheses. Ask **by dir, not cwd** — the statusline knows the
+  session's config dir but has no meaningful cwd. Default **false**; with it
+  off claude-profile is never invoked and output is byte-identical (there's a
+  test pinning that). Every failure — not installed, no config, unclaimed dir,
+  old claude-profile — is a silent empty label, never an error. The lookup is
+  cached in a `<cache>.label` sidecar (the usage-cache filename already embeds
+  the accountUuid, so a serial swap self-invalidates; `CLAUDE_USAGE_LABEL_TTL`
+  covers the rest) and never resolves synchronously under `--no-block`. An
+  empty label is cached too — otherwise a juggler-less machine forks on every
+  repaint — but on `CLAUDE_USAGE_LABEL_TTL_MISS` (60 s), because a transient
+  miss that stuck for the full TTL would hide the label for 15 minutes.
+  Keep those two TTLs distinct. Three
+  invocation candidates, in order — `$CLAUDE_PROFILE_SCRIPT` (authoritative:
+  set-but-missing means "not installed"), a `claude-profile` function/binary,
+  then a sibling `../claude-profile/claude-profile.py`. That last one matters:
+  `claude-profile` is a *zsh function*, and the statusline renders in a bare
+  `zsh -c` that sources no zshrc. `_claude_usage_profile_have` is the single
+  probe both this and `--all` gate on. `--label STR` bypasses the lookup.
 - **`--all` (opt-in multi-account bridge)**: renders one labelled line per
-  `claude-profile` account. Gated on `command -v claude-profile`; errors cleanly
+  `claude-profile` account. Gated on `_claude_usage_profile_have`; errors cleanly
   if absent. It shells to `claude-profile usage-json --all`, which emits
   `<account>\t<compact-raw-json>` per line (empty json field = unavailable —
   e.g. a live account whose token is idle-expired, which only Claude Code can
@@ -101,7 +124,12 @@ only when the user asks for it and `claude-profile` is installed.
   credential + parked-token-refresh lives in `claude-profile` (it owns the
   secrets); `claude-usage` only ever renders. The NDJSON contract requires
   **one physical line per account** — `usage-json`'s compact `json.dumps`
-  guarantees it; don't emit pretty-printed JSON there.
+  guarantees it; don't emit pretty-printed JSON there. With `--show-profile`,
+  **one** extra call (`resolve --json --accounts`) supplies the whole
+  account→label map — keep it one call; don't fan out per account. Rows then
+  carry seat labels; `--json` keeps `account` as the raw key and adds `label`
+  beside it, while `--table` puts the label *in* the `account` field because
+  that's what the table renderer prints.
 - **`--table` (aligned named-column grid)**: a **format**, orthogonal to account
   selection — bare it renders the single resolved account (one row, labelled by
   the config-dir basename); `--all --table` renders every account. Fixes the
