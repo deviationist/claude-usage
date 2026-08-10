@@ -232,7 +232,10 @@ toggle. A cached *empty* label expires far sooner
 (`CLAUDE_USAGE_LABEL_TTL_MISS`, 60 s), so a transient failure can't hide the
 label for a quarter of an hour. An *answer* of "no label" is not a miss — it's
 cached like any other answer, so a machine with nothing to disambiguate isn't
-re-asking every minute forever. Under `--no-block` the sidecar is never filled
+re-asking every minute forever. A **claude-profile config edit invalidates the
+cache immediately** (its mtime is compared against the sidecar's), since
+renaming a profile or adding a `display` moves nothing in the cache key and
+would otherwise go unnoticed for the full TTL. Under `--no-block` the sidecar is never filled
 synchronously — a cold cache renders one repaint without the label and
 refreshes in the background.
 
@@ -337,6 +340,7 @@ process env.
 | `CLAUDE_USAGE_SHOW_PROFILE` | `false` | Default for `--show-profile` (seat label from claude-profile, e.g. `Personal (Max 5x)`). |
 | `CLAUDE_USAGE_LABEL_SEP` | metric sep | Default for `--label-sep` — what sits between the seat label and the first metric. |
 | `CLAUDE_USAGE_LABEL_TTL` | `900` | Max age (seconds) of the cached seat label before it's re-resolved. |
+| `CLAUDE_PROFILE_CONFIG` | XDG default | claude-profile's config path — watched for edits that invalidate the cached label (the same knob claude-profile itself honours). |
 | `CLAUDE_USAGE_LABEL_TTL_MISS` | `60` | Same, for a cached *empty* label — short, so a transient failure can't hide the label for the full TTL. |
 | `CLAUDE_PROFILE_SCRIPT` | unset | Explicit path to `claude-profile.py` for the `--show-profile` / `--all` bridge. Authoritative: if set and missing, claude-profile counts as not installed. |
 | `CLAUDE_USAGE_GROUP_SEP` | per-mode | Separator between the dollar group and the plan limits (`" \|\| "` text, `" \| "` pretty by default). |
