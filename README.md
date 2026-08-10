@@ -84,6 +84,7 @@ claude-usage --sep ' / '              # custom metric delimiter (both modes)
 claude-usage --show-profile           # prefix the seat label, e.g. "Personal (Max 5x)"
                                       # (opt-in; needs claude-profile — see below)
 claude-usage --label 'Work'           # set that label yourself, no claude-profile
+claude-usage --label-sep ' - '        # separator between the label and the bars
 claude-usage --show-reset=false       # drop the 5h reset countdown
 claude-usage --show-spend=false       # hide the monthly $-cap segment (combined view)
 claude-usage --show-balance=false     # hide the credit-balance segment
@@ -183,13 +184,17 @@ machine has more than one subscription, and the reason this exists at all:
 
 ```console
 $ claude-usage --show-profile
-Personal (Max 5x) 7d▕░░░░░░░░░░▏0% 4d20h · Fable▕░░░░░░░░░░▏0% · 5h▕▌░░░░░░░░░▏5% 1h15m
+Personal (Max 5x) · 7d▕░░░░░░░░░░▏0% 4d20h · Fable▕░░░░░░░░░░▏0% · 5h▕▌░░░░░░░░░▏5% 1h15m
 ```
+
+The label takes the same separator as the metrics (`·` pretty, `|` text) so it
+reads as its own thing rather than as part of the first bar — `--label-sep`
+(or `CLAUDE_USAGE_LABEL_SEP`) overrides it, down to a bare space.
 
 In a statusline it lands next to the bars it qualifies:
 
 ```
-~/.zsh/claude-usage [main] | Opus 5 | ctx:12% | Personal (Max 5x) 7d▕░░░░░░░░░░▏0% · 5h▕▌░░░░░░░░░▏5% 1h15m
+~/.zsh/claude-usage [main] | Opus 5 | ctx:12% | Personal (Max 5x) · 7d▕░░░░░░░░░░▏0% · 5h▕▌░░░░░░░░░▏5% 1h15m
 ```
 
 **The label is claude-profile's to compose, not ours.** `claude-usage` asks
@@ -330,6 +335,7 @@ process env.
 | `CLAUDE_USAGE_SHOW_SPEND_RESET` | `true` | Default for `--show-spend-reset` (monthly-cap reset date, derived locally). |
 | `CLAUDE_USAGE_SHOW_LIMIT_RESETS` | `true` | Default for `--show-limit-resets` (7d/model per-window reset countdowns). |
 | `CLAUDE_USAGE_SHOW_PROFILE` | `false` | Default for `--show-profile` (seat label from claude-profile, e.g. `Personal (Max 5x)`). |
+| `CLAUDE_USAGE_LABEL_SEP` | metric sep | Default for `--label-sep` — what sits between the seat label and the first metric. |
 | `CLAUDE_USAGE_LABEL_TTL` | `900` | Max age (seconds) of the cached seat label before it's re-resolved. |
 | `CLAUDE_USAGE_LABEL_TTL_MISS` | `60` | Same, for a cached *empty* label — short, so a transient failure can't hide the label for the full TTL. |
 | `CLAUDE_PROFILE_SCRIPT` | unset | Explicit path to `claude-profile.py` for the `--show-profile` / `--all` bridge. Authoritative: if set and missing, claude-profile counts as not installed. |

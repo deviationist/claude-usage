@@ -643,6 +643,11 @@ claude-usage() {
   # " || " text, " | " pretty (dimmed).
   local gsep_override="${CLAUDE_USAGE_GROUP_SEP-}" gsep_set=0
   [[ -n ${CLAUDE_USAGE_GROUP_SEP+x} ]] && gsep_set=1
+  # Separator between the seat label and the first metric. Defaults to the
+  # resolved METRIC separator ("·" pretty, "|" text): a bare space made the
+  # label read as part of the first metric rather than as its own thing.
+  local lsep_override="${CLAUDE_USAGE_LABEL_SEP-}" lsep_set=0
+  [[ -n ${CLAUDE_USAGE_LABEL_SEP+x} ]] && lsep_set=1
   # Theme (pretty mode): --theme > CLAUDE_USAGE_THEME > "default". --no-color
   # forces all colour off regardless of theme (keeps the bars, unlike --text-only).
   local theme_override="" nocolor=0
@@ -712,6 +717,10 @@ claude-usage() {
         [[ -n "${2+x}" ]] || { print -u2 "claude-usage: --group-sep requires a value"; return 1 }
         gsep_override="$2"; gsep_set=1; shift ;;
       --group-sep=*) gsep_override="${1#--group-sep=}"; gsep_set=1 ;;
+      --label-sep)
+        [[ -n "${2+x}" ]] || { print -u2 "claude-usage: --label-sep requires a value"; return 1 }
+        lsep_override="$2"; lsep_set=1; shift ;;
+      --label-sep=*) lsep_override="${1#--label-sep=}"; lsep_set=1 ;;
       --theme)
         [[ -n "${2+x}" ]] || { print -u2 "claude-usage: --theme requires a name"; return 1 }
         theme_override="$2"; shift ;;
@@ -743,11 +752,11 @@ claude-usage() {
         dir="$2"; shift ;;
       --dir=*)    dir="${1#--dir=}" ;;
       -h|--help)
-        print "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--no-bars] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--show-profile=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--fresh|--no-block] [--version]"
+        print "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--no-bars] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--show-profile=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--label-sep STR] [--fresh|--no-block] [--version]"
         print "themes: ${(j: :)all_themes}  (--list-themes to script it, --themes to preview)"
         return 0 ;;
       *)
-        print -u2 "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--no-bars] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--show-profile=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--fresh|--no-block]"
+        print -u2 "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--no-bars] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--show-profile=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--label-sep STR] [--fresh|--no-block]"
         return 1 ;;
     esac
     shift
@@ -1087,13 +1096,18 @@ claude-usage() {
   fi
 
   # Rendered form of the label: plain in --text-only, dimmed in --pretty (it
-  # identifies the seat, it isn't a metric), always space-terminated. Empty
-  # label → empty prefix → byte-identical output to a build without it.
+  # identifies the seat, it isn't a metric). The trailing separator defaults to
+  # the metric one and is dimmed together with the label, so the two read as a
+  # single quiet prefix. Empty label → empty prefix → byte-identical output to
+  # a build without it.
   local text_lblpfx="" pretty_lblpfx=""
   if [[ -n $label ]]; then
-    text_lblpfx="$label "
-    if [[ -n $dim ]]; then pretty_lblpfx=$'\e['"${dim}m${label}"$'\e[0m '
-    else pretty_lblpfx="$label " ; fi
+    local _tls _pls
+    if (( lsep_set )); then _tls="$lsep_override"; _pls="$lsep_override"
+    else _tls="$text_sep"; _pls="$pretty_sep"; fi
+    text_lblpfx="${label}${_tls}"
+    if [[ -n $dim ]]; then pretty_lblpfx=$'\e['"${dim}m${label}${_pls}"$'\e[0m'
+    else pretty_lblpfx="${label}${_pls}" ; fi
   fi
 
   case $mode in

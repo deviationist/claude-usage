@@ -468,14 +468,14 @@ eq "profile off by default (byte-identical)" \
    "$(CLAUDE_PROFILE_SCRIPT=/nonexistent/x.py claude-usage --dir $prof --text-only)"
 hasnot "profile off → no label" "$(claude-usage --dir $prof --text-only)" "Personal"
 
-has "profile on → label prefix"  "$(claude-usage --dir $prof --text-only --show-profile)" "Personal (Max 5x) 7d"
-has "profile pretty → dimmed"    "$(claude-usage --dir $prof --show-profile)" "${esc}[2mPersonal (Max 5x)${esc}[0m "
+has "profile on → label prefix"  "$(claude-usage --dir $prof --text-only --show-profile)" "Personal (Max 5x) | 7d"
+has "profile pretty → dimmed"    "$(claude-usage --dir $prof --show-profile)" "${esc}[2mPersonal (Max 5x) · ${esc}[0m"
 has "profile via env"            "$(CLAUDE_USAGE_SHOW_PROFILE=true claude-usage --dir $prof --text-only)" "Personal (Max 5x)"
 has "profile flag =false wins"   "$(CLAUDE_USAGE_SHOW_PROFILE=true claude-usage --dir $prof --text-only --show-profile=false)" "7d"
 hasnot "profile flag =false → no label" \
    "$(CLAUDE_USAGE_SHOW_PROFILE=true claude-usage --dir $prof --text-only --show-profile=false)" "Personal"
 has "explicit --label needs no juggler" \
-   "$(CLAUDE_PROFILE_SCRIPT=/nonexistent/x.py claude-usage --dir $prof --text-only --label 'Work')" "Work 7d"
+   "$(CLAUDE_PROFILE_SCRIPT=/nonexistent/x.py claude-usage --dir $prof --text-only --label 'Work')" "Work | 7d"
 
 # The lookup shells out to python — cached in a sidecar beside the usage cache
 # so a repainting statusline pays for it once. Serving from that sidecar must
@@ -485,6 +485,21 @@ unfunction claude-profile
 has "profile served from sidecar" \
    "$(CLAUDE_PROFILE_SCRIPT=/nonexistent/x.py claude-usage --dir $prof --text-only --show-profile)" \
    "Personal (Max 5x)"
+
+# The label is its own thing, not the first metric — so it takes a separator,
+# defaulting to the metric one and overridable on its own.
+eq "label sep defaults to the metric sep" \
+   "$(claude-usage --dir $prof --text-only --show-reset=false --label 'Seat' --sep ' / ')" \
+   "Seat / 7d 20% / Opus 27% / 5h 49%"
+eq "label sep overridable" \
+   "$(claude-usage --dir $prof --text-only --show-reset=false --label 'Seat' --label-sep ' -- ')" \
+   "Seat -- 7d 20% | Opus 27% | 5h 49%"
+eq "label sep can be a bare space" \
+   "$(claude-usage --dir $prof --text-only --show-reset=false --label 'Seat' --label-sep ' ')" \
+   "Seat 7d 20% | Opus 27% | 5h 49%"
+eq "label sep via env" \
+   "$(CLAUDE_USAGE_LABEL_SEP=' :: ' claude-usage --dir $prof --text-only --show-reset=false --label 'Seat')" \
+   "Seat :: 7d 20% | Opus 27% | 5h 49%"
 
 # A cached MISS must expire fast. A transient failure (claude-profile mid-swap,
 # a run with the bridge disabled) would otherwise hide the label for the full
