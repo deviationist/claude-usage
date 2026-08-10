@@ -214,6 +214,7 @@ four sane outcomes:
 |---|---|
 | No `claude-profile` | Unchanged output (flag is a no-op) |
 | One profile, one subscription | `Personal` — no parentheses |
+| One profile, several subscriptions | `Max 20x` — the profile name is a constant |
 | Profiles chosen by folder path | Follows the session's config dir |
 | Several serial accounts | `Personal (Max 20x)`, flipping on swap |
 
