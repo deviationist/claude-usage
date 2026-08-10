@@ -160,3 +160,28 @@ for any renderer or flag change**, and keep the suite network-free.
   together.
 - Default `--pretty` output is a public contract (the claude-statusline project
   parses/renders it) — changing default colours/glyphs is a breaking change.
+
+## Ideas / not yet built
+
+Recorded so they don't get lost. None of these are started — don't implement
+without asking; the design questions below are unsettled.
+
+- **Interval limits** (raised 2026-08-10). User-configurable spend limits over
+  intervals *shorter* than the reset windows the API reports. Today every window
+  rendered is one Anthropic itself reports (monthly `$`-cap, 7d, per-model, 5h),
+  and there's no notion of a self-imposed budget — so you can burn most of a
+  monthly cap in week one and the bar still looks comfortable right up until it
+  isn't. The point is pacing inside a window (e.g. a daily or per-session ceiling
+  carved out of the monthly cap).
+
+  Treat this as a new **derived limit type**, not another render toggle on the
+  existing windows. Open questions:
+  - Derived or absolute? `cap ÷ intervals elapsed` (a pace line that tracks the
+    real cap) vs. a flat number the user sets.
+  - Where does per-interval spend come from? The API reports **cumulative window
+    totals, not per-interval deltas**, so this likely needs local state
+    alongside the usage cache (which is keyed by `accountUuid` — see *Caching*
+    in the README and the cache section in `claude-usage.zsh`).
+  - How it renders in **both** pretty and `--table` modes, and whether it
+    participates in the `spend_on` gate that decides if the `$` group shows at
+    all.
