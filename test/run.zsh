@@ -501,6 +501,24 @@ eq "label sep via env" \
    "$(CLAUDE_USAGE_LABEL_SEP=' :: ' claude-usage --dir $prof --text-only --show-reset=false --label 'Seat')" \
    "Seat :: 7d 20% | Opus 27% | 5h 49%"
 
+# A config edit beats the ttl: renaming a profile moves nothing in the sidecar's
+# cache key (same dir, same account), so without this it would sit unnoticed.
+profcfg=$(seed profcfg "$RL")
+fakecfg="$tmp/claude-profile-config.json"
+print -r -- '{}' > $fakecfg
+claude-profile() { print -r -- '{"schema":1,"active":true,"label":"Old Name"}'; }
+export CLAUDE_PROFILE_CONFIG=$fakecfg
+has "label resolved before config edit" \
+    "$(claude-usage --dir $profcfg --text-only --show-profile)" "Old Name"
+claude-profile() { print -r -- '{"schema":1,"active":true,"label":"New Name"}'; }
+has "stale sidecar still served while config is untouched" \
+    "$(claude-usage --dir $profcfg --text-only --show-profile)" "Old Name"
+sleep 1; touch $fakecfg      # the edit
+has "config edit re-resolves the label before the ttl" \
+    "$(claude-usage --dir $profcfg --text-only --show-profile)" "New Name"
+unset CLAUDE_PROFILE_CONFIG
+unfunction claude-profile
+
 # A cached MISS must expire fast. A transient failure (claude-profile mid-swap,
 # a run with the bridge disabled) would otherwise hide the label for the full
 # label TTL — 15 minutes of "why is it gone?" for a one-second blip.
