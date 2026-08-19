@@ -152,7 +152,11 @@
 #           background refresh runs and the NEXT call sees the new value.
 #           Failed refreshes never destroy the last known
 #           value, and back off for 60s so a broken state doesn't hammer
-#           the endpoint from a constantly-repainting statusline.
+#           the endpoint from a constantly-repainting statusline. The refresh
+#           lock itself self-heals: one older than $lock_ttl (default 30s,
+#           override via CLAUDE_USAGE_LOCK_TTL) is assumed abandoned by a
+#           refresh that died mid-fetch and is reaped, so a crash never
+#           wedges the cache on a stale value indefinitely.
 #
 # Caveats:  - Endpoint (api.anthropic.com/api/oauth/usage) is undocumented and
 #             reverse-engineered from Claude Code; it may change without notice.
@@ -371,6 +375,23 @@ _claude_usage_refresh() {
     local fmtime
     fmtime=$(zstat +mtime "$failmark" 2>/dev/null) || fmtime=0
     (( $(date +%s) - fmtime < backoff )) && return 0
+  fi
+
+  # Stale-lock reap: a lock older than $lock_ttl is treated as abandoned, not
+  # in-flight. The whole refresh below (credential lookup + curl --max-time 6)
+  # finishes in low single-digit seconds normally, so a lock still standing
+  # decades past that means its owner died before the `always { rmdir }`
+  # cleanup ran (killed mid-fetch, machine slept, crashed) — not that it's
+  # still working. Without this, a single interrupted refresh wedges the
+  # cache forever: every future call (including --fresh) sees the lock held,
+  # waits or bails, and serves the same stale value indefinitely. Reaping it
+  # here means a wedged lock self-heals on the very next call instead of
+  # requiring a manual `rmdir` on the lock dir.
+  local lock_ttl="${CLAUDE_USAGE_LOCK_TTL:-30}"
+  if [[ -d $lock ]]; then
+    local lmtime
+    lmtime=$(zstat +mtime "$lock" 2>/dev/null) || lmtime=0
+    (( lmtime > 0 )) && (( $(date +%s) - lmtime > lock_ttl )) && rmdir "$lock" 2>/dev/null
   fi
 
   # mkdir is atomic → cheap cross-process lock, no stampedes
