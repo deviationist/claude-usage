@@ -615,6 +615,19 @@ else
   bad "svg generator (themes)" "$(head -c 200 "$tsvg" 2>/dev/null)"
 fi
 
+# Ultra seat (2026-10 pricing): verified accounts drop the 5h window, so the
+# limits carry no "session" row. Weekly windows keep their own countdowns and
+# the trailing 5h reset simply vanishes — no stray "5h 0%" from the fallback.
+ULT='{"five_hour":null,"limits":[
+  {"kind":"weekly_all","percent":47,"severity":"normal","resets_at":"'$wk_iso'"},
+  {"kind":"weekly_scoped","percent":39,"severity":"normal","resets_at":"'$wk_iso'","scope":{"model":{"display_name":"Fable"}}}]}'
+ult=$(seed ultra "$ULT")
+eq "ultra: no session window" \
+  "$(claude-usage --dir $ult --text-only --reset-prefix 'Reset ')" \
+  "7d 47% Reset 1d1h | Fable 39% Reset 1d1h"
+hasnot "ultra: pretty has no 5h" "$(claude-usage --dir $ult --no-color)" "5h"
+hasnot "ultra: table has no 5H column" "$(claude-usage --dir $ult --table --no-color)" "5H"
+
 # ---- meta flags -----------------------------------------------------------
 eq "version" "$(claude-usage --version)" "claude-usage $CLAUDE_USAGE_VERSION"
 eq "list-themes" "$(claude-usage --list-themes)" \

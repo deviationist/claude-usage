@@ -21,6 +21,10 @@ plan shapes:
   with its reset countdown (`7d▕██░░▏20% 3d21h`; the 5h window's countdown
   trails the line). All countdowns share one style — bare by default, or
   labelled via `--reset-prefix 'Reset '`.
+- **Ultra seats** (verified accounts have no 5-hour limit) render only the
+  weekly windows — `7d▕████▋░░░░░▏47% 1d23h · Fable▕███▉░░░░░░▏39% 1d23h`.
+  With no 5h window there is no trailing countdown, so `--show-reset` is a
+  no-op; every weekly window still carries its own.
 - **Max / Pro + usage credits** (the overflow budget that kicks in when you hit
   a plan limit) render both: the dollar group leads, then the plan windows —
   `$0/$40 ▕░░░░▏0% Aug 1 | 7d▕██░░▏20% 3d21h · 5h▕████▉▏49% 1h8m`. The

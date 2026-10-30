@@ -138,6 +138,7 @@
 #            countdown ("3d21h") from resets_at. Toggles: --show-spend,
 #            --show-balance, --show-spend-reset, --show-limit-resets.)
 #           --text-only, Max/Pro:         "7d 40% 3d21h | opus 63% 3d21h | 5h 12% 4h45m"
+#           Ultra (no 5h window):         "7d 47% 1d23h | Fable 39% 1d23h"
 #           Both order 5h last (next to its countdown). --show-reset (default
 #           true) appends the 5h-session countdown; every countdown takes the
 #           same --reset-prefix label (default none); --sep / CLAUDE_USAGE_SEP
