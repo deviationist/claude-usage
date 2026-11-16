@@ -60,7 +60,12 @@ only when the user asks for it and `claude-profile` is installed.
   `--show-spend` / `--show-balance` (balance renders only when `spend.balance`
   is non-null — null server-side so far), `--show-spend-reset` (the date is
   **derived locally** as the 1st of next month because the API has no monthly
-  reset field — don't present it as server data), and `--show-limit-resets`
+  reset field — don't present it as server data; `--spend-reset-format
+  date|relative|both` renders it as that date, a countdown to local midnight
+  on the 1st in the window-countdown style, or both — `14d8h (Aug 1)`, and
+  `14d8h, Aug 1` inside text mode's percent paren; the countdown is computed
+  fork-free in zsh via `zsh/datetime`, default `date` keeps output
+  byte-identical), and `--show-limit-resets`
   (per-window countdowns on non-session limits from their `resets_at`; the 5h
   window keeps the trailing countdown instead). Every reset — the window
   countdowns, the trailing 5h one, and the monthly spend-cap date — takes the

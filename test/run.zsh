@@ -20,7 +20,8 @@ unset NO_COLOR CLAUDE_USAGE_COLORS CLAUDE_USAGE_THRESHOLDS \
       CLAUDE_USAGE_BAR_CHARS CLAUDE_USAGE_BRACKETS CLAUDE_USAGE_DIM \
       CLAUDE_USAGE_THEME CLAUDE_USAGE_SEP CLAUDE_USAGE_GROUP_SEP \
       CLAUDE_USAGE_SHOW_SPEND CLAUDE_USAGE_SHOW_BALANCE \
-      CLAUDE_USAGE_SHOW_SPEND_RESET CLAUDE_USAGE_SHOW_LIMIT_RESETS \
+      CLAUDE_USAGE_SHOW_SPEND_RESET CLAUDE_USAGE_SPEND_RESET_FORMAT \
+      CLAUDE_USAGE_SHOW_LIMIT_RESETS \
       CLAUDE_USAGE_RESET_PREFIX CLAUDE_USAGE_SPEND_PREFIX \
       CLAUDE_USAGE_LIMITS_PREFIX 2>/dev/null
 # Hermetic: never read a real ~/.config/claude-usage/config
@@ -97,6 +98,37 @@ eq "text USD cap, spend-reset off" \
 eq "text combined (Max + credits)" \
   "$(claude-usage --dir $combo --text-only --show-reset=false)" \
   "\$0 / \$40 (0%, $nextmonth) | bal \$100 || 7d 20% | Opus 27% | 5h 49%"
+# --spend-reset-format: the same derived reset as a countdown (to local
+# midnight on the 1st) and/or the date. The countdown depends on the clock, so
+# assert its shape, and that it never claims more than a 31-day month allows.
+cdre='(([0-9]+)d[0-9]+h|[0-9]+h[0-9]+m|[0-9]+m)'
+srel=$(claude-usage --dir $usd --text-only --show-reset=false --spend-reset-format relative)
+if [[ $srel =~ '^\$142\.5 / \$300 \(48%, '$cdre'\)$' ]] && (( ${match[2]:-0} <= 30 )); then
+  ok "text spend-reset-format relative"
+else bad "text spend-reset-format relative" "$srel" "\$142.5 / \$300 (48%, <countdown>)"; fi
+sboth=$(claude-usage --dir $usd --text-only --show-reset=false --spend-reset-format=both)
+[[ $sboth =~ '^\$142\.5 / \$300 \(48%, '$cdre', '$nextmonth'\)$' ]] \
+  && ok "text spend-reset-format both (no nested parens)" \
+  || bad "text spend-reset-format both (no nested parens)" "$sboth" "\$142.5 / \$300 (48%, <countdown>, $nextmonth)"
+sboth=$(claude-usage --dir $usd --show-reset=false --no-color --spend-reset-format both --reset-prefix 'R:')
+[[ $sboth =~ '48% R:'$cdre' \('$nextmonth'\)$' ]] \
+  && ok "pretty spend-reset-format both + prefix" \
+  || bad "pretty spend-reset-format both + prefix" "$sboth" "… 48% R:<countdown> ($nextmonth)"
+has "table spend-reset-format both" \
+  "$(claude-usage --dir $usd --table --no-borders --no-color --spend-reset-format both)" "($nextmonth)"
+eq "spend-reset off beats format" \
+  "$(claude-usage --dir $usd --text-only --show-reset=false --show-spend-reset=false --spend-reset-format both)" \
+  "\$142.5 / \$300 (48%)"
+eq "garbage SPEND_RESET_FORMAT env → date" \
+  "$(CLAUDE_USAGE_SPEND_RESET_FORMAT=bogus claude-usage --dir $usd --text-only --show-reset=false)" \
+  "\$142.5 / \$300 (48%, $nextmonth)"
+print -r -- "CLAUDE_USAGE_SPEND_RESET_FORMAT=relative" > $tmp/srf-cfg
+srel=$(CLAUDE_USAGE_CONFIG=$tmp/srf-cfg claude-usage --dir $usd --text-only --show-reset=false)
+[[ $srel =~ '^\$142\.5 / \$300 \(48%, '$cdre'\)$' ]] \
+  && ok "SPEND_RESET_FORMAT from config file" \
+  || bad "SPEND_RESET_FORMAT from config file" "$srel" "\$142.5 / \$300 (48%, <countdown>)"
+claude-usage --dir $usd --spend-reset-format weekly >/dev/null 2>&1
+(( $? == 1 )) && ok "bad --spend-reset-format → rc 1" || bad "bad --spend-reset-format → rc 1" "rc=$?"
 eq 'text combined, dormant cap ($0, toggle off) hidden' \
   "$(claude-usage --dir $combooff --text-only --show-reset=false)" \
   "7d 20% | 5h 49%"

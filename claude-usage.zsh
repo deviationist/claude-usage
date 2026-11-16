@@ -24,6 +24,10 @@
 #                                             # date (shown by default; derived
 #                                             # locally — 1st of next month — the
 #                                             # API doesn't report it)
+#           claude-usage --spend-reset-format both # that reset as a countdown
+#                                             # AND the date: "14d10h (Dec 1)"
+#                                             # (date = "Dec 1", the default;
+#                                             # relative = "14d10h")
 #           claude-usage --show-limit-resets=false # drop the per-window reset
 #                                             # countdowns on the 7d/model limits
 #           claude-usage --reset-prefix 'Reset '   # label every reset — window
@@ -91,6 +95,7 @@
 #           CLAUDE_USAGE_SHOW_SPEND    default for --show-spend (true)
 #           CLAUDE_USAGE_SHOW_BALANCE  default for --show-balance (true)
 #           CLAUDE_USAGE_SHOW_SPEND_RESET  default for --show-spend-reset (true)
+#           CLAUDE_USAGE_SPEND_RESET_FORMAT default for --spend-reset-format (date)
 #           CLAUDE_USAGE_SHOW_LIMIT_RESETS default for --show-limit-resets (true)
 #           CLAUDE_USAGE_GROUP_SEP         dollar-group / plan-limit separator
 #           CLAUDE_USAGE_RESET_PREFIX      default for --reset-prefix ('')
@@ -183,6 +188,10 @@ export CLAUDE_USAGE_DIVISOR="${CLAUDE_USAGE_DIVISOR:-100}"
 # Builtin zstat for portable mtime (GNU and BSD stat disagree on flags).
 # -F loads only the zstat builtin, without shadowing the system `stat`.
 zmodload -F zsh/stat b:zstat 2>/dev/null
+# Builtin strftime + $EPOCHSECONDS for the monthly-cap countdown
+# (--spend-reset-format): fork-free, and strftime -r parses a local date
+# portably where BSD and GNU `date` disagree.
+zmodload -F zsh/datetime b:strftime p:EPOCHSECONDS 2>/dev/null
 
 # ----------------------------------------------------------------------------
 # Internal: cache path for a given config dir.
@@ -646,6 +655,9 @@ claude-usage() {
   # Monthly spend-cap reset date (default true). Note: the API doesn't report
   # it, so it's derived locally (1st of next month, calendar boundary).
   local show_spend_reset="${CLAUDE_USAGE_SHOW_SPEND_RESET:-true}"
+  # How that reset reads: "date" ("Dec 1", default), "relative" (a countdown
+  # in the window-reset style, "14d10h") or "both" ("14d10h (Dec 1)").
+  local spend_reset_format="${CLAUDE_USAGE_SPEND_RESET_FORMAT:-date}"
   # Per-window reset countdowns on the non-session limits (7d / model), from
   # each limit's resets_at. The 5h window keeps its trailing countdown.
   local show_limit_resets="${CLAUDE_USAGE_SHOW_LIMIT_RESETS:-true}"
@@ -725,6 +737,13 @@ claude-usage() {
       --show-spend-reset=*)
         show_spend_reset="${1#--show-spend-reset=}"
         [[ $show_spend_reset == (true|false) ]] || { print -u2 "claude-usage: --show-spend-reset takes true or false"; return 1 } ;;
+      --spend-reset-format)
+        [[ -n "${2+x}" ]] || { print -u2 "claude-usage: --spend-reset-format requires a value"; return 1 }
+        spend_reset_format="$2"; shift
+        [[ $spend_reset_format == (date|relative|both) ]] || { print -u2 "claude-usage: --spend-reset-format takes date, relative or both"; return 1 } ;;
+      --spend-reset-format=*)
+        spend_reset_format="${1#--spend-reset-format=}"
+        [[ $spend_reset_format == (date|relative|both) ]] || { print -u2 "claude-usage: --spend-reset-format takes date, relative or both"; return 1 } ;;
       --show-profile)     show_profile=true ;;
       --show-profile=*)
         show_profile="${1#--show-profile=}"
@@ -788,11 +807,11 @@ claude-usage() {
         dir="$2"; shift ;;
       --dir=*)    dir="${1#--dir=}" ;;
       -h|--help)
-        print "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--no-bars] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--show-profile=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--label-sep STR] [--fresh|--no-block] [--version]"
+        print "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--no-bars] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--spend-reset-format date|relative|both] [--show-limit-resets=true|false] [--show-profile=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--label-sep STR] [--fresh|--no-block] [--version]"
         print "themes: ${(j: :)all_themes}  (--list-themes to script it, --themes to preview)"
         return 0 ;;
       *)
-        print -u2 "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--no-bars] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--show-limit-resets=true|false] [--show-profile=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--label-sep STR] [--fresh|--no-block]"
+        print -u2 "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--no-bars] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--spend-reset-format date|relative|both] [--show-limit-resets=true|false] [--show-profile=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--label-sep STR] [--fresh|--no-block]"
         return 1 ;;
     esac
     shift
@@ -803,6 +822,7 @@ claude-usage() {
   [[ $show_balance      == (true|false) ]] || show_balance=true
   [[ $show_limit_resets == (true|false) ]] || show_limit_resets=true
   [[ $show_profile      == (true|false) ]] || show_profile=false
+  [[ $spend_reset_format == (date|relative|both) ]] || spend_reset_format=date
 
   # ---- --themes: preview — render the current usage once per theme ---------
   if [[ $mode == themes ]]; then
@@ -928,10 +948,42 @@ claude-usage() {
   # Monthly spend-cap reset label ("" = don't show). Derived, not from the API:
   # usage credits reset on the 1st of the next calendar month. Computed here
   # (before the --all/--table block) so the table can label the $-cap column.
-  local spend_reset=""
+  # --spend-reset-format relative/both adds a countdown to LOCAL midnight on
+  # that 1st, formatted like the window countdowns ("14d10h" / "4h45m" /
+  # "45m"). Text mode folds the reset into the percent paren, so it gets its
+  # own comma-joined form there ("48%, 14d10h, Dec 1") instead of nested
+  # parens. Without zsh/datetime the countdown is skipped and the date stays.
+  local spend_reset="" spend_reset_text=""
   if [[ $show_spend_reset == true ]]; then
     local -a _mn=(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec)
     spend_reset="${_mn[$(( 10#$(date +%m) % 12 + 1 ))]} 1"
+    if [[ $spend_reset_format != date ]] && (( ${+EPOCHSECONDS} )); then
+      local _sr_ym="" _sr_at="" _sr_rel=""
+      local -i _sr_now=$EPOCHSECONDS _sr_y=0 _sr_m=0 _sr_rem=0
+      strftime -s _sr_ym '%Y %m' $_sr_now
+      _sr_y=${_sr_ym% *}
+      _sr_m=$(( 10#${_sr_ym#* } % 12 + 1 ))
+      (( _sr_m == 1 )) && (( _sr_y++ ))
+      if strftime -r -s _sr_at '%Y-%m-%d %H:%M:%S' \
+           "$_sr_y-${(l:2::0:)_sr_m}-01 00:00:00" 2>/dev/null; then
+        _sr_rem=$(( _sr_at - _sr_now ))
+        if (( _sr_rem >= 86400 )); then
+          _sr_rel="$(( _sr_rem / 86400 ))d$(( _sr_rem % 86400 / 3600 ))h"
+        elif (( _sr_rem >= 3600 )); then
+          _sr_rel="$(( _sr_rem / 3600 ))h$(( _sr_rem % 3600 / 60 ))m"
+        elif (( _sr_rem > 0 )); then
+          _sr_rel="$(( _sr_rem / 60 ))m"
+        fi
+      fi
+      if [[ -n $_sr_rel ]]; then
+        case $spend_reset_format in
+          relative) spend_reset="$_sr_rel" ;;
+          both)     spend_reset_text="$_sr_rel, $spend_reset"
+                    spend_reset="$_sr_rel ($spend_reset)" ;;
+        esac
+      fi
+    fi
+    [[ -n $spend_reset_text ]] || spend_reset_text="$spend_reset"
   fi
 
   # ---- --all / --table: multi-account views via claude-profile --------------
@@ -1203,7 +1255,7 @@ claude-usage() {
             --argjson showspend "$show_spend" --argjson showbal "$show_balance" \
             --argjson showlr "$show_limit_resets" --arg rpfx "$reset_prefix" \
             --arg sppfx "$spend_prefix" --arg limpfx "$limits_prefix" \
-            --arg spendreset "$spend_reset" --arg sep "$text_sep" \
+            --arg spendreset "$spend_reset_text" --arg sep "$text_sep" \
             --arg gsep "$text_gsep" --arg lblpfx "$text_lblpfx" '
         def money:
           if type == "object" then (.amount_minor // 0) / pow(10; (.exponent // 2))
