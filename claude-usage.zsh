@@ -973,14 +973,16 @@ claude-usage() {
   # Monthly spend-cap reset label ("" = don't show). Derived, not from the API:
   # usage credits reset on the 1st of the next calendar month. Computed here
   # (before the --all/--table block) so the table can label the $-cap column.
-  # --spend-reset-format relative/both adds a countdown to LOCAL midnight on
-  # that 1st, formatted like the window countdowns ("14d10h" / "4h45m" /
-  # "45m"). Text mode folds the reset into the percent paren, so it gets its
-  # own comma-joined form there ("48%, 14d10h, Dec 1") instead of nested
-  # parens. Without zsh/datetime the countdown is skipped and the date stays.
+  # --spend-reset-format relative/both adds a countdown to 00:00 UTC on that
+  # 1st — when Anthropic resets the cap (its Spend Limits API docs say so, and
+  # claude.ai shows "Resets Dec 1, 1:00 AM GMT+1") — formatted like the window
+  # countdowns ("14d10h" / "4h45m" / "45m"). Text mode folds the reset into
+  # the percent paren, so it gets its own comma-joined form there ("48%,
+  # 14d10h, Dec 1") instead of nested parens. Without zsh/datetime the
+  # countdown is skipped and the date stays.
   #
-  # --show-daily-budget reuses the same countdown: budget_days = calendar days
-  # left until that midnight, TODAY INCLUDED (ceil of the remaining seconds), so
+  # --show-daily-budget reuses the same countdown: budget_days = UTC days left
+  # until that midnight, TODAY INCLUDED (ceil of the remaining seconds), so
   # the renderers can print (cap - spent) / budget_days. 0 = feature off or no
   # clock (zsh/datetime missing) — the jq programs treat 0 as "don't render".
   local spend_reset="" spend_reset_text=""
@@ -989,14 +991,16 @@ claude-usage() {
        ( $show_spend_reset == true && $spend_reset_format != date ) ]]; then
     local _sr_ym="" _sr_at=""
     local -i _sr_now=$EPOCHSECONDS _sr_y=0 _sr_m=0
-    strftime -s _sr_ym '%Y %m' $_sr_now
-    _sr_y=${_sr_ym% *}
-    _sr_m=$(( 10#${_sr_ym#* } % 12 + 1 ))
-    (( _sr_m == 1 )) && (( _sr_y++ ))
-    if strftime -r -s _sr_at '%Y-%m-%d %H:%M:%S' \
-         "$_sr_y-${(l:2::0:)_sr_m}-01 00:00:00" 2>/dev/null; then
-      _sr_rem=$(( _sr_at - _sr_now ))
-    fi
+    # The month and its 1st are the UTC ones: TZ is scoped to this function.
+    () {
+      local -x TZ=UTC
+      strftime -s _sr_ym '%Y %m' $_sr_now
+      _sr_y=${_sr_ym% *}
+      _sr_m=$(( 10#${_sr_ym#* } % 12 + 1 ))
+      (( _sr_m == 1 )) && (( _sr_y++ ))
+      strftime -r -s _sr_at '%Y-%m-%d %H:%M:%S' \
+        "$_sr_y-${(l:2::0:)_sr_m}-01 00:00:00" 2>/dev/null
+    } && _sr_rem=$(( _sr_at - _sr_now ))
   fi
   if [[ $show_daily_budget == true ]] && (( _sr_rem > 0 )); then
     budget_days=$(( (_sr_rem + 86399) / 86400 ))

@@ -348,7 +348,7 @@ process env.
 | `CLAUDE_USAGE_SHOW_SPEND` | `true` | Default for `--show-spend` (monthly $-cap segment in the combined view). |
 | `CLAUDE_USAGE_SHOW_BALANCE` | `true` | Default for `--show-balance` (credit-balance segment, when the API reports one). |
 | `CLAUDE_USAGE_SHOW_SPEND_RESET` | `true` | Default for `--show-spend-reset` (monthly-cap reset date, derived locally). |
-| `CLAUDE_USAGE_SPEND_RESET_FORMAT` | `date` | Default for `--spend-reset-format`: `date` (`Dec 1`), `relative` (`14d8h`, counted to local midnight on the 1st) or `both` (`14d8h · Dec 1`; text mode `48%, 14d8h, Dec 1`). |
+| `CLAUDE_USAGE_SPEND_RESET_FORMAT` | `date` | Default for `--spend-reset-format`: `date` (`Dec 1`), `relative` (`14d8h`, counted to 00:00 UTC on the 1st, when Anthropic resets the cap) or `both` (`14d8h · Dec 1`; text mode `48%, 14d8h, Dec 1`). |
 | `CLAUDE_USAGE_SHOW_DAILY_BUDGET` | `false` | Default for `--show-daily-budget`: the $-cap's remainder ÷ days left until the 1st (today included), as `· $14.32/day` after the reset (text mode `48%, Dec 1, $14.32/day`); `--json` adds `spend.days_left` / `spend.daily_budget`. Only renders where a $-cap does. |
 | `CLAUDE_USAGE_SHOW_LIMIT_RESETS` | `true` | Default for `--show-limit-resets` (7d/model per-window reset countdowns). |
 | `CLAUDE_USAGE_SHOW_PROFILE` | `false` | Default for `--show-profile` (seat label from claude-profile, e.g. `Personal (Max 5x)`). |

@@ -99,14 +99,30 @@ eq "text USD cap, spend-reset off" \
 eq "text combined (Max + credits)" \
   "$(claude-usage --dir $combo --text-only --show-reset=false)" \
   "\$0 / \$40 (0%, $nextmonth) | bal \$100 || 7d 20% | Opus 27% | 5h 49%"
-# --spend-reset-format: the same derived reset as a countdown (to local
-# midnight on the 1st) and/or the date. The countdown depends on the clock, so
+# --spend-reset-format: the same derived reset as a countdown (to 00:00
+# UTC on the 1st) and/or the date. The countdown depends on the clock, so
 # assert its shape, and that it never claims more than a 31-day month allows.
 cdre='(([0-9]+)d[0-9]+h|[0-9]+h[0-9]+m|[0-9]+m)'
 srel=$(claude-usage --dir $usd --text-only --show-reset=false --spend-reset-format relative)
 if [[ $srel =~ '^\$142\.5 / \$300 \(48%, '$cdre'\)$' ]] && (( ${match[2]:-0} <= 30 )); then
   ok "text spend-reset-format relative"
 else bad "text spend-reset-format relative" "$srel" "\$142.5 / \$300 (48%, <countdown>)"; fi
+# The countdown targets 00:00 UTC on the 1st (Anthropic's reset), so it is the
+# same in every timezone and matches one computed here in UTC.
+utc_left() {
+  local -x TZ=UTC; local ym at; local -i y m rem
+  strftime -s ym '%Y %m' $EPOCHSECONDS
+  y=${ym% *}; m=$(( 10#${ym#* } % 12 + 1 )); (( m == 1 )) && (( y++ ))
+  strftime -r -s at '%Y-%m-%d %H:%M:%S' "$y-${(l:2::0:)m}-01 00:00:00"
+  rem=$(( at - EPOCHSECONDS ))
+  if (( rem >= 86400 )); then print "$(( rem / 86400 ))d$(( rem % 86400 / 3600 ))h"
+  elif (( rem >= 3600 )); then print "$(( rem / 3600 ))h$(( rem % 3600 / 60 ))m"
+  else print "$(( rem / 60 ))m"; fi
+}
+srk=$(TZ=Pacific/Kiritimati claude-usage --dir $usd --text-only --show-reset=false --spend-reset-format relative)
+srl=$(TZ=America/Los_Angeles claude-usage --dir $usd --text-only --show-reset=false --spend-reset-format relative)
+eq "spend-reset countdown is timezone-independent (UTC+14 vs UTC-8)" "$srk" "$srl"
+eq "spend-reset countdown targets 00:00 UTC on the 1st" "$srk" "\$142.5 / \$300 (48%, $(utc_left))"
 sboth=$(claude-usage --dir $usd --text-only --show-reset=false --spend-reset-format=both)
 [[ $sboth =~ '^\$142\.5 / \$300 \(48%, '$cdre', '$nextmonth'\)$' ]] \
   && ok "text spend-reset-format both (no nested parens)" \
