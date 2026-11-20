@@ -61,13 +61,14 @@ only when the user asks for it and `claude-profile` is installed.
   is non-null — null server-side so far), `--show-spend-reset` (the date is
   **derived locally** as the 1st of next month because the API has no monthly
   reset field — don't present it as server data; `--spend-reset-format
-  date|relative|both` renders it as that date, a countdown to local midnight
-  on the 1st in the window-countdown style, or both — `14d8h · Aug 1` (flat, middot-joined; the daily budget follows
+  date|relative|both` renders it as that date, a countdown to 00:00 UTC
+  on the 1st (when Anthropic resets the cap: its Spend Limits API docs, and
+  claude.ai's "Resets Dec 1, 1:00 AM GMT+1") in the window-countdown style, or both — `14d8h · Aug 1` (flat, middot-joined; the daily budget follows
   as `· $14.32/day`), and
   `14d8h, Aug 1` inside text mode's percent paren; the countdown is computed
   fork-free in zsh via `zsh/datetime`, default `date` keeps output
   byte-identical), and `--show-daily-budget` (**opt-in, default false**): `(cap - spent) / budget_days`
-  where `budget_days` = calendar days left until that same local-midnight
+  where `budget_days` = UTC days left until that same 00:00-UTC
   boundary, today included (ceil of the remaining seconds), computed once in zsh
   and passed to every renderer as `$bdays` (0 = off → nothing rendered, output
   byte-identical); floors at `$0.00/day` over cap; `--json` gains
@@ -224,7 +225,28 @@ without asking; the design questions below are unsettled.
 
 - **Interval limits** (raised 2026-08-10). *Partly built:* the derived,
   stateless variant exists as `--show-daily-budget` (remaining cap ÷ days left).
-  Still open: absolute user-set ceilings and actual per-interval spend. User-configurable spend limits over
+  Still open: absolute user-set ceilings and actual per-interval spend.
+
+  **Actual per-day spend: researched 2026-11-20, shelved.** The OAuth token
+  only ever yields the month's running total. Findings, so nobody redoes this:
+  - `/api/oauth/usage` (any flag Claude Code sends: `at_wall`, `cedar_ember`,
+    `starry_waterfall`, `skip_spend`) returns no per-day data for a capped
+    USD seat; `extra_usage.daily` / `weekly` exist but are `null` (Claude Code
+    only reads them on seats without a monthly cap). No other `/api/oauth/…`
+    path in Claude Code has spend history (`overage_spend_limit` is write-only).
+  - claude.ai's usage page reads
+    `claude.ai/api/organizations/{org}/usage/spend?granularity=daily` —
+    browser `sessionKey` cookie only, behind a Cloudflare bot check that
+    blocks curl. The same path on `api.anthropic.com` answers
+    `oauth_token_not_accepted`.
+  - The official `/v1/organizations/analytics/{usage,cost}`
+    (`time_bucket_width=1d`, `group_by[]=actor`) needs a `read:analytics` API
+    key or `api:use` service-account token, issued by an org admin. That is
+    the only clean source; a possible opt-in if a user has such a key.
+  - Deriving it locally (diffing the total against a reading at 00:00 UTC)
+    is only exact when a reading lands right after midnight, or the total
+    didn't move overnight; a sleeping laptop can't promise either, so it was
+    dropped rather than shipped as a sometimes-right number. User-configurable spend limits over
   intervals *shorter* than the reset windows the API reports. Today every window
   rendered is one Anthropic itself reports (monthly `$`-cap, 7d, per-model, 5h),
   and there's no notion of a self-imposed budget — so you can burn most of a
