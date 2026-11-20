@@ -21,6 +21,7 @@ unset NO_COLOR CLAUDE_USAGE_COLORS CLAUDE_USAGE_THRESHOLDS \
       CLAUDE_USAGE_THEME CLAUDE_USAGE_SEP CLAUDE_USAGE_GROUP_SEP \
       CLAUDE_USAGE_SHOW_SPEND CLAUDE_USAGE_SHOW_BALANCE \
       CLAUDE_USAGE_SHOW_SPEND_RESET CLAUDE_USAGE_SPEND_RESET_FORMAT \
+      CLAUDE_USAGE_SHOW_DAILY_BUDGET \
       CLAUDE_USAGE_SHOW_LIMIT_RESETS \
       CLAUDE_USAGE_RESET_PREFIX CLAUDE_USAGE_SPEND_PREFIX \
       CLAUDE_USAGE_LIMITS_PREFIX 2>/dev/null
@@ -111,11 +112,11 @@ sboth=$(claude-usage --dir $usd --text-only --show-reset=false --spend-reset-for
   && ok "text spend-reset-format both (no nested parens)" \
   || bad "text spend-reset-format both (no nested parens)" "$sboth" "\$142.5 / \$300 (48%, <countdown>, $nextmonth)"
 sboth=$(claude-usage --dir $usd --show-reset=false --no-color --spend-reset-format both --reset-prefix 'R:')
-[[ $sboth =~ '48% R:'$cdre' \('$nextmonth'\)$' ]] \
+[[ $sboth =~ '48% R:'$cdre' · '$nextmonth'$' ]] \
   && ok "pretty spend-reset-format both + prefix" \
-  || bad "pretty spend-reset-format both + prefix" "$sboth" "… 48% R:<countdown> ($nextmonth)"
+  || bad "pretty spend-reset-format both + prefix" "$sboth" "… 48% R:<countdown> · $nextmonth"
 has "table spend-reset-format both" \
-  "$(claude-usage --dir $usd --table --no-borders --no-color --spend-reset-format both)" "($nextmonth)"
+  "$(claude-usage --dir $usd --table --no-borders --no-color --spend-reset-format both)" " · $nextmonth"
 eq "spend-reset off beats format" \
   "$(claude-usage --dir $usd --text-only --show-reset=false --show-spend-reset=false --spend-reset-format both)" \
   "\$142.5 / \$300 (48%)"
@@ -127,6 +128,46 @@ srel=$(CLAUDE_USAGE_CONFIG=$tmp/srf-cfg claude-usage --dir $usd --text-only --sh
 [[ $srel =~ '^\$142\.5 / \$300 \(48%, '$cdre'\)$' ]] \
   && ok "SPEND_RESET_FORMAT from config file" \
   || bad "SPEND_RESET_FORMAT from config file" "$srel" "\$142.5 / \$300 (48%, <countdown>)"
+# --show-daily-budget (opt-in): what's left of the cap / days left, today
+# included. Clock-dependent, so check the JSON arithmetic and the rendered shape.
+hasnot "daily budget off by default (text)" \
+  "$(claude-usage --dir $usd --text-only --show-reset=false)" "/day"
+hasnot "daily budget off by default (json)" \
+  "$(claude-usage --dir $usd --json)" "daily_budget"
+bj=$(claude-usage --dir $usd --json --show-daily-budget)
+bdl=$(jq -r '.spend.days_left' <<< "$bj"); bdb=$(jq -r '.spend.daily_budget' <<< "$bj")
+if (( bdl >= 1 && bdl <= 31 )) && \
+   [[ $(jq -n --argjson n $bdl '157.5 / $n * 100 | round / 100') == $bdb ]]; then
+  ok "json daily budget = (300 - 142.5) / days_left"
+else bad "json daily budget = (300 - 142.5) / days_left" "$bj"; fi
+bt=$(claude-usage --dir $usd --text-only --show-reset=false --show-daily-budget)
+[[ $bt =~ '^\$142\.5 / \$300 \(48%, '$nextmonth', \$[0-9]+\.[0-9][0-9]/day\)$' ]] \
+  && ok "text daily budget" || bad "text daily budget" "$bt" "\$142.5 / \$300 (48%, $nextmonth, \$N.NN/day)"
+bp=$(claude-usage --dir $usd --show-reset=false --no-color --show-daily-budget=true)
+[[ $bp =~ '48% '$nextmonth' · \$[0-9]+\.[0-9][0-9]/day$' ]] \
+  && ok "pretty daily budget" || bad "pretty daily budget" "$bp" "… 48% $nextmonth · \$N.NN/day"
+has "table daily budget" \
+  "$(claude-usage --dir $usd --table --no-borders --no-color --show-daily-budget)" " · \$"
+bb=$(claude-usage --dir $usd --show-reset=false --no-color --spend-reset-format both --show-daily-budget)
+[[ $bb =~ '48% '$cdre' · '$nextmonth' · \$[0-9]+\.[0-9][0-9]/day$' ]] \
+  && ok "pretty both + daily budget: countdown · date · budget" \
+  || bad "pretty both + daily budget: countdown · date · budget" "$bb" "… 48% <countdown> · $nextmonth · \$N.NN/day"
+has "combined view daily budget" \
+  "$(claude-usage --dir $combo --text-only --show-reset=false --show-daily-budget)" "/day) | bal"
+hasnot "no \$-cap → no daily budget" \
+  "$(claude-usage --dir $rl --text-only --show-reset=false --show-daily-budget)" "/day"
+OVER='{"spend":{"enabled":true,"used":{"amount_minor":30004,"exponent":2},
+  "limit":{"amount_minor":30000,"exponent":2},"percent":100}}'
+over=$(seed over "$OVER")
+has "cap spent → \$0.00/day" \
+  "$(claude-usage --dir $over --text-only --show-reset=false --show-daily-budget)" ", \$0.00/day)"
+print -r -- "CLAUDE_USAGE_SHOW_DAILY_BUDGET=true" > $tmp/db-cfg
+has "SHOW_DAILY_BUDGET from config file" \
+  "$(CLAUDE_USAGE_CONFIG=$tmp/db-cfg claude-usage --dir $usd --text-only --show-reset=false)" "/day)"
+hasnot "garbage SHOW_DAILY_BUDGET env → off" \
+  "$(CLAUDE_USAGE_SHOW_DAILY_BUDGET=bogus claude-usage --dir $usd --text-only --show-reset=false)" "/day"
+claude-usage --dir $usd --show-daily-budget=maybe >/dev/null 2>&1
+(( $? == 1 )) && ok "bad --show-daily-budget → rc 1" || bad "bad --show-daily-budget → rc 1" "rc=$?"
 claude-usage --dir $usd --spend-reset-format weekly >/dev/null 2>&1
 (( $? == 1 )) && ok "bad --spend-reset-format → rc 1" || bad "bad --spend-reset-format → rc 1" "rc=$?"
 eq 'text combined, dormant cap ($0, toggle off) hidden' \

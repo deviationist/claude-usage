@@ -25,9 +25,13 @@
 #                                             # locally — 1st of next month — the
 #                                             # API doesn't report it)
 #           claude-usage --spend-reset-format both # that reset as a countdown
-#                                             # AND the date: "14d10h (Dec 1)"
+#                                             # AND the date: "14d10h · Dec 1"
 #                                             # (date = "Dec 1", the default;
 #                                             # relative = "14d10h")
+#           claude-usage --show-daily-budget  # opt-in: what is left of the
+#                                             # monthly $-cap spread over the
+#                                             # days left, today included:
+#                                             # "$142.5/$300 … Dec 1 · $14.32/day"
 #           claude-usage --show-limit-resets=false # drop the per-window reset
 #                                             # countdowns on the 7d/model limits
 #           claude-usage --reset-prefix 'Reset '   # label every reset — window
@@ -96,6 +100,7 @@
 #           CLAUDE_USAGE_SHOW_BALANCE  default for --show-balance (true)
 #           CLAUDE_USAGE_SHOW_SPEND_RESET  default for --show-spend-reset (true)
 #           CLAUDE_USAGE_SPEND_RESET_FORMAT default for --spend-reset-format (date)
+#           CLAUDE_USAGE_SHOW_DAILY_BUDGET default for --show-daily-budget (false)
 #           CLAUDE_USAGE_SHOW_LIMIT_RESETS default for --show-limit-resets (true)
 #           CLAUDE_USAGE_GROUP_SEP         dollar-group / plan-limit separator
 #           CLAUDE_USAGE_RESET_PREFIX      default for --reset-prefix ('')
@@ -508,7 +513,7 @@ _claude_usage_render_table() {
     --argjson showlr "$show_limit_resets" --argjson showreset "$show_reset" \
     --argjson showspendreset "$show_spend_reset" \
     --arg rpfx "$reset_prefix" --arg spendreset "$spend_reset" \
-    --argjson borders "$borders" \
+    --argjson borders "$borders" --argjson bdays "$budget_days" \
     --arg gfull "$gfull" --arg gpartial "$gpartial" --arg gempty "$gempty" \
     --arg lbr "$lbr" --arg rbr "$rbr" --argjson bw "$bar_width" \
     --argjson bars "$table_bars" '
@@ -543,6 +548,15 @@ _claude_usage_render_table() {
              | if $dd>0 then "\($dd)d\($h)h" elif $h>0 then "\($h)h\($m)m" else "\($m)m" end
           end
       end;
+    # Daily budget (--show-daily-budget): what is left of the cap spread
+    # over the $bdays days left until it resets, today included; $0/day
+    # once the cap is spent. $bdays == 0 → feature off → "".
+    def cents2: (. * 100 | round) as $c
+      | "\(($c / 100) | floor).\(($c % 100) | tostring | if length < 2 then "0" + . else . end)";
+    def daily($s; $l):
+      if $bdays > 0 and $l > 0 then
+        ((if $l > $s then ($l - $s) else 0 end) / $bdays) | "$\(cents2)/day"
+      else "" end;
     def rsuf($show; $cd): if ($show and (($cd // "") != "")) then {p: " \($rpfx)\($cd)", r: (" " + paint($dim; "\($rpfx)\($cd)"))} else {p:"", r:""} end;
     # Matches the pretty spend_on gate: a limit is present AND the cap is either
     # live (credits enabled) OR carries real recorded spend. A dormant, never-used
@@ -555,6 +569,7 @@ _claude_usage_render_table() {
       spend: (if spendlive
               then "$\(.usage.spend.spent|d2|dropzeros)/$\(.usage.spend.limit|d2|dropzeros)" else null end),
       spend_pct: (if spendlive then (.usage.spend.percent // 0) else null end),
+      daily: (if spendlive then daily(.usage.spend.spent // 0; .usage.spend.limit) else "" end),
       m: (if .usage == null then {} else
             reduce ((.usage.limits // [])[]) as $l ({};
               .[ (if $l.kind=="weekly_all" then "7d"
@@ -579,7 +594,8 @@ _claude_usage_render_table() {
           (if $r.spend == null then {plain:"·", rich: paint($dim; "·")}
            else (rsuf($showspendreset; $spendreset)) as $rs
                 | (barof($r.spend_pct)) as $b
-                | {plain: ($b + $r.spend + $rs.p), rich: (paint(colf($r.spend_pct); $b + $r.spend) + $rs.r)} end)
+                | (if $r.daily != "" then {p: " · \($r.daily)", r: (" " + paint($dim; "· \($r.daily)"))} else {p:"", r:""} end) as $db
+                | {plain: ($b + $r.spend + $rs.p + $db.p), rich: (paint(colf($r.spend_pct); $b + $r.spend) + $rs.r + $db.r)} end)
         else ($r.m[$c.k]) as $cell |
           (if $cell == null or $cell.pct == null then {plain:"·", rich: paint($dim; "·")}
            else (left($cell.resets)) as $cd
@@ -656,8 +672,12 @@ claude-usage() {
   # it, so it's derived locally (1st of next month, calendar boundary).
   local show_spend_reset="${CLAUDE_USAGE_SHOW_SPEND_RESET:-true}"
   # How that reset reads: "date" ("Dec 1", default), "relative" (a countdown
-  # in the window-reset style, "14d10h") or "both" ("14d10h (Dec 1)").
+  # in the window-reset style, "14d10h") or "both" ("14d10h · Dec 1").
   local spend_reset_format="${CLAUDE_USAGE_SPEND_RESET_FORMAT:-date}"
+  # Daily budget on the monthly $-cap (OPT-IN, default false): what's left of
+  # the cap spread evenly over the days left until it resets, today included
+  # ("$14.32/day"). Derived locally from the same 1st-of-next-month boundary.
+  local show_daily_budget="${CLAUDE_USAGE_SHOW_DAILY_BUDGET:-false}"
   # Per-window reset countdowns on the non-session limits (7d / model), from
   # each limit's resets_at. The 5h window keeps its trailing countdown.
   local show_limit_resets="${CLAUDE_USAGE_SHOW_LIMIT_RESETS:-true}"
@@ -744,6 +764,10 @@ claude-usage() {
       --spend-reset-format=*)
         spend_reset_format="${1#--spend-reset-format=}"
         [[ $spend_reset_format == (date|relative|both) ]] || { print -u2 "claude-usage: --spend-reset-format takes date, relative or both"; return 1 } ;;
+      --show-daily-budget) show_daily_budget=true ;;
+      --show-daily-budget=*)
+        show_daily_budget="${1#--show-daily-budget=}"
+        [[ $show_daily_budget == (true|false) ]] || { print -u2 "claude-usage: --show-daily-budget takes true or false"; return 1 } ;;
       --show-profile)     show_profile=true ;;
       --show-profile=*)
         show_profile="${1#--show-profile=}"
@@ -807,11 +831,11 @@ claude-usage() {
         dir="$2"; shift ;;
       --dir=*)    dir="${1#--dir=}" ;;
       -h|--help)
-        print "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--no-bars] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--spend-reset-format date|relative|both] [--show-limit-resets=true|false] [--show-profile=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--label-sep STR] [--fresh|--no-block] [--version]"
+        print "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--no-bars] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--spend-reset-format date|relative|both] [--show-daily-budget=true|false] [--show-limit-resets=true|false] [--show-profile=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--label-sep STR] [--fresh|--no-block] [--version]"
         print "themes: ${(j: :)all_themes}  (--list-themes to script it, --themes to preview)"
         return 0 ;;
       *)
-        print -u2 "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--no-bars] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--spend-reset-format date|relative|both] [--show-limit-resets=true|false] [--show-profile=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--label-sep STR] [--fresh|--no-block]"
+        print -u2 "usage: claude-usage [--dir PATH|--all] [--table] [--no-borders] [--no-bars] [--pretty|--text-only|--json|--raw] [--theme NAME|--themes|--no-color] [--show-reset=true|false] [--show-spend=true|false] [--show-balance=true|false] [--show-spend-reset=true|false] [--spend-reset-format date|relative|both] [--show-daily-budget=true|false] [--show-limit-resets=true|false] [--show-profile=true|false] [--reset-prefix STR] [--spend-prefix STR] [--limits-prefix STR] [--sep STR] [--group-sep STR] [--label-sep STR] [--fresh|--no-block]"
         return 1 ;;
     esac
     shift
@@ -822,6 +846,7 @@ claude-usage() {
   [[ $show_balance      == (true|false) ]] || show_balance=true
   [[ $show_limit_resets == (true|false) ]] || show_limit_resets=true
   [[ $show_profile      == (true|false) ]] || show_profile=false
+  [[ $show_daily_budget == (true|false) ]] || show_daily_budget=false
   [[ $spend_reset_format == (date|relative|both) ]] || spend_reset_format=date
 
   # ---- --themes: preview — render the current usage once per theme ---------
@@ -953,35 +978,46 @@ claude-usage() {
   # "45m"). Text mode folds the reset into the percent paren, so it gets its
   # own comma-joined form there ("48%, 14d10h, Dec 1") instead of nested
   # parens. Without zsh/datetime the countdown is skipped and the date stays.
+  #
+  # --show-daily-budget reuses the same countdown: budget_days = calendar days
+  # left until that midnight, TODAY INCLUDED (ceil of the remaining seconds), so
+  # the renderers can print (cap - spent) / budget_days. 0 = feature off or no
+  # clock (zsh/datetime missing) — the jq programs treat 0 as "don't render".
   local spend_reset="" spend_reset_text=""
+  local -i budget_days=0 _sr_rem=0
+  if (( ${+EPOCHSECONDS} )) && [[ $show_daily_budget == true || \
+       ( $show_spend_reset == true && $spend_reset_format != date ) ]]; then
+    local _sr_ym="" _sr_at=""
+    local -i _sr_now=$EPOCHSECONDS _sr_y=0 _sr_m=0
+    strftime -s _sr_ym '%Y %m' $_sr_now
+    _sr_y=${_sr_ym% *}
+    _sr_m=$(( 10#${_sr_ym#* } % 12 + 1 ))
+    (( _sr_m == 1 )) && (( _sr_y++ ))
+    if strftime -r -s _sr_at '%Y-%m-%d %H:%M:%S' \
+         "$_sr_y-${(l:2::0:)_sr_m}-01 00:00:00" 2>/dev/null; then
+      _sr_rem=$(( _sr_at - _sr_now ))
+    fi
+  fi
+  if [[ $show_daily_budget == true ]] && (( _sr_rem > 0 )); then
+    budget_days=$(( (_sr_rem + 86399) / 86400 ))
+  fi
   if [[ $show_spend_reset == true ]]; then
     local -a _mn=(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec)
     spend_reset="${_mn[$(( 10#$(date +%m) % 12 + 1 ))]} 1"
-    if [[ $spend_reset_format != date ]] && (( ${+EPOCHSECONDS} )); then
-      local _sr_ym="" _sr_at="" _sr_rel=""
-      local -i _sr_now=$EPOCHSECONDS _sr_y=0 _sr_m=0 _sr_rem=0
-      strftime -s _sr_ym '%Y %m' $_sr_now
-      _sr_y=${_sr_ym% *}
-      _sr_m=$(( 10#${_sr_ym#* } % 12 + 1 ))
-      (( _sr_m == 1 )) && (( _sr_y++ ))
-      if strftime -r -s _sr_at '%Y-%m-%d %H:%M:%S' \
-           "$_sr_y-${(l:2::0:)_sr_m}-01 00:00:00" 2>/dev/null; then
-        _sr_rem=$(( _sr_at - _sr_now ))
-        if (( _sr_rem >= 86400 )); then
-          _sr_rel="$(( _sr_rem / 86400 ))d$(( _sr_rem % 86400 / 3600 ))h"
-        elif (( _sr_rem >= 3600 )); then
-          _sr_rel="$(( _sr_rem / 3600 ))h$(( _sr_rem % 3600 / 60 ))m"
-        elif (( _sr_rem > 0 )); then
-          _sr_rel="$(( _sr_rem / 60 ))m"
-        fi
+    if [[ $spend_reset_format != date ]] && (( _sr_rem > 0 )); then
+      local _sr_rel=""
+      if (( _sr_rem >= 86400 )); then
+        _sr_rel="$(( _sr_rem / 86400 ))d$(( _sr_rem % 86400 / 3600 ))h"
+      elif (( _sr_rem >= 3600 )); then
+        _sr_rel="$(( _sr_rem / 3600 ))h$(( _sr_rem % 3600 / 60 ))m"
+      else
+        _sr_rel="$(( _sr_rem / 60 ))m"
       fi
-      if [[ -n $_sr_rel ]]; then
-        case $spend_reset_format in
-          relative) spend_reset="$_sr_rel" ;;
-          both)     spend_reset_text="$_sr_rel, $spend_reset"
-                    spend_reset="$_sr_rel ($spend_reset)" ;;
-        esac
-      fi
+      case $spend_reset_format in
+        relative) spend_reset="$_sr_rel" ;;
+        both)     spend_reset_text="$_sr_rel, $spend_reset"
+                  spend_reset="$_sr_rel · $spend_reset" ;;
+      esac
     fi
     [[ -n $spend_reset_text ]] || spend_reset_text="$spend_reset"
   fi
@@ -1203,7 +1239,7 @@ claude-usage() {
       jq . "$cache"
       ;;
     json)
-      jq --argjson d "$divisor" '
+      jq --argjson d "$divisor" --argjson bdays "$budget_days" '
         # Money in minor units: {amount_minor, exponent} → dollars
         def money:
           if type == "object" then (.amount_minor // 0) / pow(10; (.exponent // 2))
@@ -1234,6 +1270,12 @@ claude-usage() {
          else
            { spent: null, limit: null, balance: null, percent: null, enabled: false, source: null }
          end) as $spend |
+        # --show-daily-budget: days_left (today included) + the even daily
+        # share of what is left of the cap; only added while the flag is on.
+        (if $bdays > 0 and ($spend.limit // 0) > 0 then
+           $spend + { days_left: $bdays,
+                      daily_budget: ((([$spend.limit - ($spend.spent // 0), 0] | max) / $bdays) * 100 | round / 100) }
+         else $spend end) as $spend |
         {
           spend: $spend,
           limits: [ (.limits // [])[]
@@ -1256,6 +1298,7 @@ claude-usage() {
             --argjson showlr "$show_limit_resets" --arg rpfx "$reset_prefix" \
             --arg sppfx "$spend_prefix" --arg limpfx "$limits_prefix" \
             --arg spendreset "$spend_reset_text" --arg sep "$text_sep" \
+            --argjson bdays "$budget_days" \
             --arg gsep "$text_gsep" --arg lblpfx "$text_lblpfx" '
         def money:
           if type == "object" then (.amount_minor // 0) / pow(10; (.exponent // 2))
@@ -1294,18 +1337,28 @@ claude-usage() {
         # Monthly-reset suffix folded into the percent paren: "(0%, Aug 1)" —
         # takes the same $rpfx label as the window countdowns
         def rst: if $spendreset != "" then ", \($rpfx)\($spendreset)" else "" end;
+        # Daily budget (--show-daily-budget): what is left of the cap spread
+        # over the $bdays days left until it resets, today included; $0/day
+        # once the cap is spent. $bdays == 0 → feature off → "".
+        def cents2: (. * 100 | round) as $c
+          | "\(($c / 100) | floor).\(($c % 100) | tostring | if length < 2 then "0" + . else . end)";
+        def daily($s; $l):
+          if $bdays > 0 and $l > 0 then
+            ((if $l > $s then ($l - $s) else 0 end) / $bdays) | "$\(cents2)/day"
+          else "" end;
+        def bud($s; $l): daily($s; $l) | if . != "" then ", " + . else "" end;
         # Dollar segment ("" when the account has no cap): modern .spend
         # preferred, legacy .extra_usage (work seats on older schema) fallback.
         def spend_line:
           if (.spend.limit // null) != null then
             (.spend.used | money) as $s | (.spend.limit | money) as $l |
-            "$\($s | fmt2) / $\($l | fmt2) (\(.spend.percent // (if $l > 0 then $s / $l * 100 else 0 end) | round)%\(rst))"
+            "$\($s | fmt2) / $\($l | fmt2) (\(.spend.percent // (if $l > 0 then $s / $l * 100 else 0 end) | round)%\(rst)\(bud($s; $l)))"
           elif (.extra_usage.monthly_limit // 0) > 0 then
             (if .extra_usage.decimal_places != null
              then pow(10; .extra_usage.decimal_places) else $d end) as $div |
             ((.extra_usage.used_credits  // 0) / $div) as $s |
             ((.extra_usage.monthly_limit // 0) / $div) as $l |
-            "$\($s | fmt2) / $\($l | fmt2) (\($s / $l * 100 | round)%\(rst))"
+            "$\($s | fmt2) / $\($l | fmt2) (\($s / $l * 100 | round)%\(rst)\(bud($s; $l)))"
           else "" end;
         # Should the dollar cap show? Live (credits enabled) OR carrying real
         # recorded usage — a toggled-off cap still leaves accrued spend worth
@@ -1373,6 +1426,7 @@ claude-usage() {
             --argjson showlr "$show_limit_resets" --arg rpfx "$reset_prefix" \
             --arg sppfx "$spend_prefix" --arg limpfx "$limits_prefix" \
             --arg spendreset "$spend_reset" --arg gsep "$pretty_gsep" \
+            --argjson bdays "$budget_days" \
             --arg clo "$clo" --arg cmid "$cmid" --arg chi "$chi" \
             --argjson tmid "$tmid" --argjson thi "$thi" \
             --arg gfull "$gfull" --arg gpartial "$gpartial" --arg gempty "$gempty" \
@@ -1432,20 +1486,30 @@ claude-usage() {
         # Monthly-reset suffix, dimmed, after the spend bar: " Aug 1" — takes
         # the same $rpfx label as the window countdowns
         def rst: if $spendreset != "" then " " + paint($dim; "\($rpfx)\($spendreset)") else "" end;
+        # Daily budget (--show-daily-budget): what is left of the cap spread
+        # over the $bdays days left until it resets, today included; $0/day
+        # once the cap is spent. $bdays == 0 → feature off → "".
+        def cents2: (. * 100 | round) as $c
+          | "\(($c / 100) | floor).\(($c % 100) | tostring | if length < 2 then "0" + . else . end)";
+        def daily($s; $l):
+          if $bdays > 0 and $l > 0 then
+            ((if $l > $s then ($l - $s) else 0 end) / $bdays) | "$\(cents2)/day"
+          else "" end;
+        def bud($s; $l): daily($s; $l) | if . != "" then " " + paint($dim; "· " + .) else "" end;
         # Dollar bar ("" when the account has no cap): modern .spend preferred,
         # legacy .extra_usage fallback.
         def spend_bar:
           if (.spend.limit // null) != null then
             (.spend.used | money) as $s | (.spend.limit | money) as $l |
             (.spend.percent // (if $l > 0 then $s / $l * 100 else 0 end)) as $p |
-            paint(col($p); "$\($s | fmt2)/$\($l | fmt2) \($lbr)\(mkbar($p))\($rbr)\($p | round)%") + rst
+            paint(col($p); "$\($s | fmt2)/$\($l | fmt2) \($lbr)\(mkbar($p))\($rbr)\($p | round)%") + rst + bud($s; $l)
           elif (.extra_usage.monthly_limit // 0) > 0 then
             (if .extra_usage.decimal_places != null
              then pow(10; .extra_usage.decimal_places) else $d end) as $div |
             ((.extra_usage.used_credits  // 0) / $div) as $s |
             ((.extra_usage.monthly_limit // 0) / $div) as $l |
             (if $l > 0 then $s / $l * 100 else 0 end) as $p |
-            paint(col($p); "$\($s | fmt2)/$\($l | fmt2) \($lbr)\(mkbar($p))\($rbr)\($p | round)%") + rst
+            paint(col($p); "$\($s | fmt2)/$\($l | fmt2) \($lbr)\(mkbar($p))\($rbr)\($p | round)%") + rst + bud($s; $l)
           else "" end;
         # Should the dollar cap show? Yes when it is live (credits enabled) OR
         # when it carries real recorded usage — a toggled-off cap still leaves
