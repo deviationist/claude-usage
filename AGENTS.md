@@ -62,10 +62,19 @@ only when the user asks for it and `claude-profile` is installed.
   **derived locally** as the 1st of next month because the API has no monthly
   reset field — don't present it as server data; `--spend-reset-format
   date|relative|both` renders it as that date, a countdown to local midnight
-  on the 1st in the window-countdown style, or both — `14d8h (Aug 1)`, and
+  on the 1st in the window-countdown style, or both — `14d8h · Aug 1` (flat, middot-joined; the daily budget follows
+  as `· $14.32/day`), and
   `14d8h, Aug 1` inside text mode's percent paren; the countdown is computed
   fork-free in zsh via `zsh/datetime`, default `date` keeps output
-  byte-identical), and `--show-limit-resets`
+  byte-identical), and `--show-daily-budget` (**opt-in, default false**): `(cap - spent) / budget_days`
+  where `budget_days` = calendar days left until that same local-midnight
+  boundary, today included (ceil of the remaining seconds), computed once in zsh
+  and passed to every renderer as `$bdays` (0 = off → nothing rendered, output
+  byte-identical); floors at `$0.00/day` over cap; `--json` gains
+  `spend.days_left` / `spend.daily_budget` only while it's on. It rides on the
+  dollar segment, so it appears exactly where the `$`-cap does (USD seats, and
+  Pro/Max/Ultra with usage credits) — never on the %-only plan windows. And
+  `--show-limit-resets`
   (per-window countdowns on non-session limits from their `resets_at`; the 5h
   window keeps the trailing countdown instead). Every reset — the window
   countdowns, the trailing 5h one, and the monthly spend-cap date — takes the
@@ -213,7 +222,9 @@ for any renderer or flag change**, and keep the suite network-free.
 Recorded so they don't get lost. None of these are started — don't implement
 without asking; the design questions below are unsettled.
 
-- **Interval limits** (raised 2026-08-10). User-configurable spend limits over
+- **Interval limits** (raised 2026-08-10). *Partly built:* the derived,
+  stateless variant exists as `--show-daily-budget` (remaining cap ÷ days left).
+  Still open: absolute user-set ceilings and actual per-interval spend. User-configurable spend limits over
   intervals *shorter* than the reset windows the API reports. Today every window
   rendered is one Anthropic itself reports (monthly `$`-cap, 7d, per-model, 5h),
   and there's no notion of a self-imposed budget — so you can burn most of a

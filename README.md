@@ -37,8 +37,10 @@ Each piece is individually configurable: `--show-spend=false` hides the
 monthly cap (`$0/$40`), `--show-spend-reset=false` drops the monthly cap's
 reset date (`Aug 1` — derived locally as the 1st of next month, since the API
 doesn't report it), `--spend-reset-format relative|both` turns that date into
-a countdown like the window resets (`14d8h`) or shows both (`14d8h (Aug 1)`),
-and `--show-limit-resets=false` drops the per-window countdowns on the 7d/model
+a countdown like the window resets (`14d8h`) or shows both (`14d8h · Aug 1`),
+`--show-daily-budget` (opt-in) appends (` · $14.32/day`) what's left of the cap spread evenly
+over the days until it resets, today included (`$157.50` left with 11 days to
+go → `$14.32/day`; `$0.00/day` once the cap is spent), and `--show-limit-resets=false` drops the per-window countdowns on the 7d/model
 limits.
 
 > **Your total credit balance can't be shown.** The usage API reports the
@@ -96,8 +98,9 @@ claude-usage --show-spend=false       # hide the monthly $-cap segment (combined
 claude-usage --show-balance=false     # hide the credit-balance segment
 claude-usage --show-spend-reset=false # drop the monthly-cap reset date
 claude-usage --spend-reset-format both # that reset as countdown + date:
-                                      # "14d8h (Dec 1)" (date | relative | both;
+                                      # "14d8h · Dec 1" (date | relative | both;
                                       # default date)
+claude-usage --show-daily-budget      # opt-in: "$14.32/day" left on the $-cap
 claude-usage --show-limit-resets=false # drop the 7d/model reset countdowns
 claude-usage --reset-prefix 'Reset '  # label every reset — countdowns and the
                                       # monthly-cap date (default: bare)
@@ -345,7 +348,8 @@ process env.
 | `CLAUDE_USAGE_SHOW_SPEND` | `true` | Default for `--show-spend` (monthly $-cap segment in the combined view). |
 | `CLAUDE_USAGE_SHOW_BALANCE` | `true` | Default for `--show-balance` (credit-balance segment, when the API reports one). |
 | `CLAUDE_USAGE_SHOW_SPEND_RESET` | `true` | Default for `--show-spend-reset` (monthly-cap reset date, derived locally). |
-| `CLAUDE_USAGE_SPEND_RESET_FORMAT` | `date` | Default for `--spend-reset-format`: `date` (`Dec 1`), `relative` (`14d8h`, counted to local midnight on the 1st) or `both` (`14d8h (Dec 1)`; text mode `48%, 14d8h, Dec 1`). |
+| `CLAUDE_USAGE_SPEND_RESET_FORMAT` | `date` | Default for `--spend-reset-format`: `date` (`Dec 1`), `relative` (`14d8h`, counted to local midnight on the 1st) or `both` (`14d8h · Dec 1`; text mode `48%, 14d8h, Dec 1`). |
+| `CLAUDE_USAGE_SHOW_DAILY_BUDGET` | `false` | Default for `--show-daily-budget`: the $-cap's remainder ÷ days left until the 1st (today included), as `· $14.32/day` after the reset (text mode `48%, Dec 1, $14.32/day`); `--json` adds `spend.days_left` / `spend.daily_budget`. Only renders where a $-cap does. |
 | `CLAUDE_USAGE_SHOW_LIMIT_RESETS` | `true` | Default for `--show-limit-resets` (7d/model per-window reset countdowns). |
 | `CLAUDE_USAGE_SHOW_PROFILE` | `false` | Default for `--show-profile` (seat label from claude-profile, e.g. `Personal (Max 5x)`). |
 | `CLAUDE_USAGE_LABEL_SEP` | metric sep | Default for `--label-sep` — what sits between the seat label and the first metric. |
